@@ -12,6 +12,7 @@ from athyr.models import (
     CompletionRequest,
     CompletionResponse,
     Message,
+    Model,
     Tool,
     ToolCall,
     TokenUsage,
@@ -298,3 +299,83 @@ class TestCompleteGrpcErrors:
 
         with pytest.raises(InvalidRequestError):
             await mock_agent.complete(request)
+
+
+class TestModelsNotConnected:
+    """Tests for models() when not connected."""
+
+    @pytest.mark.asyncio
+    async def test_models_raises_when_not_connected(self) -> None:
+        """Test models() raises ConnectionError when not connected."""
+        agent = AthyrAgent("localhost:9090")
+        with pytest.raises(ConnectionError):
+            await agent.models()
+
+
+class TestModelsWithMock:
+    """Tests for models() with mocked gRPC stub."""
+
+    @pytest.fixture
+    def mock_agent(self) -> AthyrAgent:
+        """Create an agent with mocked connection state."""
+        agent = AthyrAgent("localhost:9090")
+        agent._connected = True
+        agent._agent_id = "test-agent-123"
+        agent._stub = MagicMock()
+        return agent
+
+    @pytest.mark.asyncio
+    async def test_models_returns_list(self, mock_agent: AthyrAgent) -> None:
+        """Test models() returns list of available models."""
+        mock_response = athyr_pb2.ListModelsResponse(
+            models=[
+                athyr_pb2.Model(
+                    id="llama3",
+                    name="Llama 3",
+                    backend="ollama",
+                    available=True,
+                ),
+                athyr_pb2.Model(
+                    id="gpt-4",
+                    name="GPT-4",
+                    backend="openai",
+                    available=True,
+                ),
+                athyr_pb2.Model(
+                    id="claude-3",
+                    name="Claude 3",
+                    backend="anthropic",
+                    available=False,
+                ),
+            ]
+        )
+        mock_agent._stub.ListModels = AsyncMock(return_value=mock_response)
+
+        models = await mock_agent.models()
+
+        assert len(models) == 3
+        assert models[0].id == "llama3"
+        assert models[0].name == "Llama 3"
+        assert models[0].backend == "ollama"
+        assert models[0].available is True
+        assert models[1].id == "gpt-4"
+        assert models[2].available is False
+
+    @pytest.mark.asyncio
+    async def test_models_returns_empty_list(self, mock_agent: AthyrAgent) -> None:
+        """Test models() returns empty list when no models available."""
+        mock_response = athyr_pb2.ListModelsResponse(models=[])
+        mock_agent._stub.ListModels = AsyncMock(return_value=mock_response)
+
+        models = await mock_agent.models()
+
+        assert models == []
+
+    @pytest.mark.asyncio
+    async def test_models_wraps_grpc_error(self, mock_agent: AthyrAgent) -> None:
+        """Test models() wraps gRPC errors."""
+        mock_error = MockGrpcError(grpc.StatusCode.UNAVAILABLE, "Service down")
+        mock_agent._stub.ListModels = AsyncMock(side_effect=mock_error)
+
+        with pytest.raises(UnavailableError):
+            await mock_agent.models()
