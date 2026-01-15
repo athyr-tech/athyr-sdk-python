@@ -13,6 +13,7 @@ from athyr.models import (
     CompletionResponse,
     Message,
     Model,
+    StreamChunk,
     Tool,
     ToolCall,
     TokenUsage,
@@ -379,3 +380,169 @@ class TestModelsWithMock:
 
         with pytest.raises(UnavailableError):
             await mock_agent.models()
+
+
+# Helper to create async iterator from list
+async def async_iter(items):
+    """Convert a list to an async iterator."""
+    for item in items:
+        yield item
+
+
+class TestCompleteStreamNotConnected:
+    """Tests for complete_stream() when not connected."""
+
+    @pytest.mark.asyncio
+    async def test_complete_stream_raises_when_not_connected(self) -> None:
+        """Test complete_stream() raises ConnectionError when not connected."""
+        agent = AthyrAgent("localhost:9090")
+        request = CompletionRequest(
+            model="llama3",
+            messages=[Message(role="user", content="Hello")],
+        )
+        with pytest.raises(ConnectionError):
+            async for _ in agent.complete_stream(request):
+                pass
+
+
+class TestCompleteStreamWithMock:
+    """Tests for complete_stream() with mocked gRPC stub."""
+
+    @pytest.fixture
+    def mock_agent(self) -> AthyrAgent:
+        """Create an agent with mocked connection state."""
+        agent = AthyrAgent("localhost:9090")
+        agent._connected = True
+        agent._agent_id = "test-agent-123"
+        agent._stub = MagicMock()
+        return agent
+
+    @pytest.mark.asyncio
+    async def test_complete_stream_yields_chunks(self, mock_agent: AthyrAgent) -> None:
+        """Test complete_stream() yields StreamChunk objects."""
+        # Create mock stream that returns chunks
+        chunks = [
+            athyr_pb2.StreamChunk(content="Hello", done=False),
+            athyr_pb2.StreamChunk(content=" world", done=False),
+            athyr_pb2.StreamChunk(
+                content="!",
+                done=True,
+                model="llama3",
+                backend="ollama",
+                usage=athyr_pb2.TokenUsage(
+                    prompt_tokens=10,
+                    completion_tokens=3,
+                    total_tokens=13,
+                ),
+            ),
+        ]
+
+        # Mock the streaming call
+        mock_stream = MagicMock()
+        mock_stream.__aiter__ = lambda self: async_iter(chunks)
+        mock_agent._stub.CompleteStream = MagicMock(return_value=mock_stream)
+
+        request = CompletionRequest(
+            model="llama3",
+            messages=[Message(role="user", content="Hi")],
+        )
+
+        received_chunks = []
+        async for chunk in mock_agent.complete_stream(request):
+            received_chunks.append(chunk)
+
+        assert len(received_chunks) == 3
+        assert received_chunks[0].content == "Hello"
+        assert received_chunks[0].done is False
+        assert received_chunks[1].content == " world"
+        assert received_chunks[2].content == "!"
+        assert received_chunks[2].done is True
+        assert received_chunks[2].model == "llama3"
+        assert received_chunks[2].usage is not None
+        assert received_chunks[2].usage.total_tokens == 13
+
+    @pytest.mark.asyncio
+    async def test_complete_stream_accumulates_content(
+        self, mock_agent: AthyrAgent
+    ) -> None:
+        """Test streaming can accumulate content."""
+        chunks = [
+            athyr_pb2.StreamChunk(content="One", done=False),
+            athyr_pb2.StreamChunk(content=" two", done=False),
+            athyr_pb2.StreamChunk(content=" three", done=True),
+        ]
+
+        mock_stream = MagicMock()
+        mock_stream.__aiter__ = lambda self: async_iter(chunks)
+        mock_agent._stub.CompleteStream = MagicMock(return_value=mock_stream)
+
+        request = CompletionRequest(
+            model="llama3",
+            messages=[Message(role="user", content="Count")],
+        )
+
+        full_content = ""
+        async for chunk in mock_agent.complete_stream(request):
+            full_content += chunk.content
+
+        assert full_content == "One two three"
+
+    @pytest.mark.asyncio
+    async def test_complete_stream_with_tool_calls(
+        self, mock_agent: AthyrAgent
+    ) -> None:
+        """Test complete_stream() handles tool calls on final chunk."""
+        chunks = [
+            athyr_pb2.StreamChunk(content="", done=False),
+            athyr_pb2.StreamChunk(
+                content="",
+                done=True,
+                tool_calls=[
+                    athyr_pb2.ToolCall(
+                        id="call_1",
+                        name="get_weather",
+                        arguments='{"city": "NYC"}',
+                    ),
+                ],
+            ),
+        ]
+
+        mock_stream = MagicMock()
+        mock_stream.__aiter__ = lambda self: async_iter(chunks)
+        mock_agent._stub.CompleteStream = MagicMock(return_value=mock_stream)
+
+        request = CompletionRequest(
+            model="llama3",
+            messages=[Message(role="user", content="Weather?")],
+        )
+
+        final_chunk = None
+        async for chunk in mock_agent.complete_stream(request):
+            final_chunk = chunk
+
+        assert final_chunk is not None
+        assert len(final_chunk.tool_calls) == 1
+        assert final_chunk.tool_calls[0].name == "get_weather"
+
+    @pytest.mark.asyncio
+    async def test_complete_stream_passes_agent_id(
+        self, mock_agent: AthyrAgent
+    ) -> None:
+        """Test complete_stream() includes agent_id in request."""
+        chunks = [athyr_pb2.StreamChunk(content="Hi", done=True)]
+
+        mock_stream = MagicMock()
+        mock_stream.__aiter__ = lambda self: async_iter(chunks)
+        mock_agent._stub.CompleteStream = MagicMock(return_value=mock_stream)
+
+        request = CompletionRequest(
+            model="llama3",
+            messages=[Message(role="user", content="Hello")],
+        )
+
+        async for _ in mock_agent.complete_stream(request):
+            pass
+
+        call_args = mock_agent._stub.CompleteStream.call_args
+        proto_request = call_args[0][0]
+        assert proto_request.agent_id == "test-agent-123"

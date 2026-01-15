@@ -4,13 +4,20 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import AsyncIterator
 from typing import Protocol, runtime_checkable
 
 import grpc
 
 from athyr._grpc import athyr_pb2, athyr_pb2_grpc
 from athyr.exceptions import AthyrError, ConnectionError, from_grpc_error
-from athyr.models import AgentCard, CompletionRequest, CompletionResponse, Model
+from athyr.models import (
+    AgentCard,
+    CompletionRequest,
+    CompletionResponse,
+    Model,
+    StreamChunk,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -249,5 +256,33 @@ class AthyrAgent:
         try:
             response = await self._stub.ListModels(athyr_pb2.ListModelsRequest())
             return [Model.from_proto(m) for m in response.models]
+        except grpc.RpcError as e:
+            raise from_grpc_error(e) from e
+
+    async def complete_stream(
+        self, request: CompletionRequest
+    ) -> AsyncIterator[StreamChunk]:
+        """Perform a streaming LLM completion.
+
+        Args:
+            request: The completion request with model, messages, and options.
+
+        Yields:
+            StreamChunk objects with incremental content. The final chunk
+            has done=True and includes usage statistics.
+
+        Raises:
+            ConnectionError: If not connected to Athyr.
+            InvalidRequestError: If request parameters are invalid.
+            UnavailableError: If the LLM service is unavailable.
+            StreamError: If the stream encounters an error.
+        """
+        self._ensure_connected()
+
+        try:
+            proto_request = request.to_proto(agent_id=self._agent_id)
+            stream = self._stub.CompleteStream(proto_request)
+            async for chunk in stream:
+                yield StreamChunk.from_proto(chunk)
         except grpc.RpcError as e:
             raise from_grpc_error(e) from e

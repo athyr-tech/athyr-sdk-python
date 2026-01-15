@@ -224,6 +224,35 @@ class CompletionResponse(BaseModel):
         )
 
 
+class StreamChunk(BaseModel):
+    """Streaming response chunk."""
+
+    content: str = ""
+    done: bool = False
+    usage: TokenUsage | None = None  # Only on final chunk
+    model: str = ""  # Only on final chunk
+    backend: str = ""  # Only on final chunk
+    error: str = ""  # Error message if failed
+    tool_calls: list[ToolCall] = Field(default_factory=list)  # Only on final chunk
+
+    @classmethod
+    def from_proto(cls, proto: athyr_pb2.StreamChunk) -> "StreamChunk":
+        """Create from protobuf message."""
+        usage = None
+        if proto.usage and proto.usage.total_tokens > 0:
+            usage = TokenUsage.from_proto(proto.usage)
+
+        return cls(
+            content=proto.content,
+            done=proto.done,
+            usage=usage,
+            model=proto.model,
+            backend=proto.backend,
+            error=proto.error,
+            tool_calls=[ToolCall.from_proto(tc) for tc in proto.tool_calls],
+        )
+
+
 class Model(BaseModel):
     """Available LLM model."""
 
