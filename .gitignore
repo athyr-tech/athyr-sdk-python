@@ -49,7 +49,8 @@ htmlcov/
 # ruff
 .ruff_cache/
 
-# Generated gRPC stubs (regenerate with scripts/generate_protos.sh)
-athyr/_grpc/*_pb2.py
-athyr/_grpc/*_pb2_grpc.py
-athyr/_grpc/*_pb2.pyi
+# Proto source (not needed for SDK users, only for regeneration)
+proto/
+
+# Note: Generated gRPC stubs ARE tracked (needed for SDK package)
+# To regenerate: ./scripts/generate_protos.sh
