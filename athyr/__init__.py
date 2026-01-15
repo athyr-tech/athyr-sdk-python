@@ -2,7 +2,40 @@
 
 __version__ = "0.1.0"
 
-# Public API will be exported here as modules are implemented
-# from athyr.client import Agent, AthyrAgent
-# from athyr.models import AgentCard, Message, CompletionRequest, CompletionResponse
-# from athyr.exceptions import AthyrError
+from athyr.client import Agent, AthyrAgent
+from athyr.exceptions import (
+    AthyrError,
+    AuthenticationError,
+    CancelledError,
+    ConnectionError,
+    InternalError,
+    InvalidRequestError,
+    NotFoundError,
+    ResourceExhaustedError,
+    StreamError,
+    TimeoutError,
+    UnavailableError,
+)
+from athyr.models import AgentCard
+
+__all__ = [
+    # Version
+    "__version__",
+    # Client
+    "Agent",
+    "AthyrAgent",
+    # Models
+    "AgentCard",
+    # Exceptions
+    "AthyrError",
+    "AuthenticationError",
+    "CancelledError",
+    "ConnectionError",
+    "InternalError",
+    "InvalidRequestError",
+    "NotFoundError",
+    "ResourceExhaustedError",
+    "StreamError",
+    "TimeoutError",
+    "UnavailableError",
+]
