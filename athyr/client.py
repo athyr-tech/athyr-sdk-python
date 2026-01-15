@@ -10,7 +10,7 @@ import grpc
 
 from athyr._grpc import athyr_pb2, athyr_pb2_grpc
 from athyr.exceptions import AthyrError, ConnectionError, from_grpc_error
-from athyr.models import AgentCard
+from athyr.models import AgentCard, CompletionRequest, CompletionResponse
 
 
 logger = logging.getLogger(__name__)
@@ -208,3 +208,28 @@ class AthyrAgent:
             raise ConnectionError("Not connected to Athyr")
         if not self._stub:
             raise ConnectionError("No stub available")
+
+    # LLM Operations
+
+    async def complete(self, request: CompletionRequest) -> CompletionResponse:
+        """Perform a blocking LLM completion.
+
+        Args:
+            request: The completion request with model, messages, and options.
+
+        Returns:
+            CompletionResponse with the generated content and metadata.
+
+        Raises:
+            ConnectionError: If not connected to Athyr.
+            InvalidRequestError: If request parameters are invalid.
+            UnavailableError: If the LLM service is unavailable.
+        """
+        self._ensure_connected()
+
+        try:
+            proto_request = request.to_proto(agent_id=self._agent_id)
+            proto_response = await self._stub.Complete(proto_request)
+            return CompletionResponse.from_proto(proto_response)
+        except grpc.RpcError as e:
+            raise from_grpc_error(e) from e
