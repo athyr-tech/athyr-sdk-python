@@ -16,7 +16,7 @@ from athyr.exceptions import (
     TimeoutError,
     UnavailableError,
 )
-from athyr.models import AgentCard, Tool
+from athyr.models import AgentCard, Session, SessionMessage, SessionProfile, Tool
 from athyr.tools import get_tool, is_tool, tool
 
 __all__ = [
@@ -27,6 +27,9 @@ __all__ = [
     "AthyrAgent",
     # Models
     "AgentCard",
+    "Session",
+    "SessionMessage",
+    "SessionProfile",
     "Tool",
     # Tools
     "tool",

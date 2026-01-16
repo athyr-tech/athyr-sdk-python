@@ -10,16 +10,17 @@ from typing import Protocol, runtime_checkable
 import grpc
 
 from athyr._grpc import athyr_pb2, athyr_pb2_grpc
-from athyr.exceptions import AthyrError, ConnectionError, from_grpc_error
+from athyr.exceptions import ConnectionError, from_grpc_error
 from athyr.models import (
     AgentCard,
     CompletionRequest,
     CompletionResponse,
     Model,
+    Session,
+    SessionProfile,
     StreamChunk,
 )
 from athyr.subscription import Subscription
-
 
 logger = logging.getLogger(__name__)
 
@@ -58,6 +59,22 @@ class Agent(Protocol):
 
     async def request(self, subject: str, data: bytes, timeout: float = 5.0) -> bytes:
         """Send request and wait for response (RPC pattern)."""
+        ...
+
+    async def create_session(
+        self,
+        profile: SessionProfile | None = None,
+        system_prompt: str = "",
+    ) -> Session:
+        """Create a new memory session."""
+        ...
+
+    async def get_session(self, session_id: str) -> Session:
+        """Retrieve an existing session."""
+        ...
+
+    async def delete_session(self, session_id: str) -> None:
+        """Delete a session."""
         ...
 
 
@@ -482,5 +499,111 @@ class AthyrAgent:
                 )
             )
             return response.data
+        except grpc.RpcError as e:
+            raise from_grpc_error(e) from e
+
+    # Memory Session Operations
+
+    async def create_session(
+        self,
+        profile: SessionProfile | None = None,
+        system_prompt: str = "",
+    ) -> Session:
+        """Create a new memory session.
+
+        Creates a conversation session for maintaining context across
+        multiple completions. Sessions can be configured with different
+        memory profiles (rolling window, summarization, etc.).
+
+        Args:
+            profile: Session memory profile configuration. Defaults to
+                rolling window with 4000 max tokens.
+            system_prompt: Agent personality/instructions for this session.
+
+        Returns:
+            Session object with the assigned session ID.
+
+        Raises:
+            ConnectionError: If not connected to Athyr.
+            AthyrError: If session creation fails.
+
+        Example:
+            session = await agent.create_session(
+                profile=SessionProfile(max_tokens=8000),
+                system_prompt="You are a helpful assistant.",
+            )
+            # Use session.id in completion requests
+        """
+        stub = self._ensure_connected()
+
+        try:
+            request = athyr_pb2.CreateSessionRequest(
+                agent_id=self._agent_id,
+                profile=profile.to_proto() if profile else None,
+                system_prompt=system_prompt,
+            )
+            response = await stub.CreateSession(request)
+            return Session.from_proto(response)
+        except grpc.RpcError as e:
+            raise from_grpc_error(e) from e
+
+    async def get_session(self, session_id: str) -> Session:
+        """Retrieve an existing session.
+
+        Gets the full session data including messages, summary,
+        hints, and profile configuration.
+
+        Args:
+            session_id: The session ID returned from create_session.
+
+        Returns:
+            Session object with current state.
+
+        Raises:
+            ConnectionError: If not connected to Athyr.
+            NotFoundError: If session doesn't exist.
+            AthyrError: If retrieval fails.
+
+        Example:
+            session = await agent.get_session("session-123")
+            print(f"Session has {len(session.messages)} messages")
+        """
+        stub = self._ensure_connected()
+
+        try:
+            request = athyr_pb2.GetSessionRequest(
+                agent_id=self._agent_id,
+                session_id=session_id,
+            )
+            response = await stub.GetSession(request)
+            return Session.from_proto(response)
+        except grpc.RpcError as e:
+            raise from_grpc_error(e) from e
+
+    async def delete_session(self, session_id: str) -> None:
+        """Delete a session.
+
+        Permanently removes the session and all its messages.
+        This operation cannot be undone.
+
+        Args:
+            session_id: The session ID to delete.
+
+        Raises:
+            ConnectionError: If not connected to Athyr.
+            NotFoundError: If session doesn't exist.
+            AthyrError: If deletion fails.
+
+        Example:
+            await agent.delete_session("session-123")
+        """
+        stub = self._ensure_connected()
+
+        try:
+            request = athyr_pb2.DeleteSessionRequest(
+                agent_id=self._agent_id,
+                session_id=session_id,
+            )
+            await stub.DeleteSession(request)
         except grpc.RpcError as e:
             raise from_grpc_error(e) from e
