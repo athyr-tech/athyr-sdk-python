@@ -44,6 +44,22 @@ class Agent(Protocol):
         """Get the agent ID."""
         ...
 
+    async def publish(self, subject: str, data: bytes) -> None:
+        """Publish a message to a subject."""
+        ...
+
+    async def subscribe(self, subject: str) -> Subscription:
+        """Subscribe to messages on a subject."""
+        ...
+
+    async def queue_subscribe(self, subject: str, queue: str) -> Subscription:
+        """Subscribe with queue group for load balancing."""
+        ...
+
+    async def request(self, subject: str, data: bytes, timeout: float = 5.0) -> bytes:
+        """Send request and wait for response (RPC pattern)."""
+        ...
+
 
 class AthyrAgent:
     """Athyr Agent client implementation.
@@ -221,12 +237,20 @@ class AthyrAgent:
         """Exit async context."""
         await self.close()
 
-    def _ensure_connected(self) -> None:
-        """Ensure the agent is connected."""
+    def _ensure_connected(self) -> athyr_pb2_grpc.AthyrStub:
+        """Ensure the agent is connected and return the stub.
+
+        Returns:
+            The gRPC stub for making API calls.
+
+        Raises:
+            ConnectionError: If not connected or stub unavailable.
+        """
         if not self._connected:
             raise ConnectionError("Not connected to Athyr")
         if not self._stub:
             raise ConnectionError("No stub available")
+        return self._stub
 
     # LLM Operations
 
@@ -244,11 +268,11 @@ class AthyrAgent:
             InvalidRequestError: If request parameters are invalid.
             UnavailableError: If the LLM service is unavailable.
         """
-        self._ensure_connected()
+        stub = self._ensure_connected()
 
         try:
             proto_request = request.to_proto(agent_id=self._agent_id)
-            proto_response = await self._stub.Complete(proto_request)
+            proto_response = await stub.Complete(proto_request)
             return CompletionResponse.from_proto(proto_response)
         except grpc.RpcError as e:
             raise from_grpc_error(e) from e
@@ -263,10 +287,10 @@ class AthyrAgent:
             ConnectionError: If not connected to Athyr.
             UnavailableError: If the service is unavailable.
         """
-        self._ensure_connected()
+        stub = self._ensure_connected()
 
         try:
-            response = await self._stub.ListModels(athyr_pb2.ListModelsRequest())
+            response = await stub.ListModels(athyr_pb2.ListModelsRequest())
             return [Model.from_proto(m) for m in response.models]
         except grpc.RpcError as e:
             raise from_grpc_error(e) from e
@@ -289,12 +313,174 @@ class AthyrAgent:
             UnavailableError: If the LLM service is unavailable.
             StreamError: If the stream encounters an error.
         """
-        self._ensure_connected()
+        stub = self._ensure_connected()
 
         try:
             proto_request = request.to_proto(agent_id=self._agent_id)
-            stream = self._stub.CompleteStream(proto_request)
+            stream = stub.CompleteStream(proto_request)
             async for chunk in stream:
                 yield StreamChunk.from_proto(chunk)
+        except grpc.RpcError as e:
+            raise from_grpc_error(e) from e
+
+    # Messaging Operations
+
+    async def publish(self, subject: str, data: bytes) -> None:
+        """Publish a message to a subject.
+
+        Args:
+            subject: The subject to publish to (e.g., "events.user.created").
+            data: The message payload as bytes.
+
+        Raises:
+            ConnectionError: If not connected to Athyr.
+            AthyrError: If the publish operation fails.
+
+        Example:
+            await agent.publish("events.order", b'{"order_id": 123}')
+        """
+        stub = self._ensure_connected()
+
+        try:
+            await stub.Publish(
+                athyr_pb2.PublishRequest(
+                    agent_id=self._agent_id,
+                    subject=subject,
+                    data=data,
+                )
+            )
+        except grpc.RpcError as e:
+            raise from_grpc_error(e) from e
+
+    async def subscribe(self, subject: str) -> Subscription:
+        """Subscribe to messages on a subject.
+
+        Creates a subscription that receives messages published to the given
+        subject. Use the async iterator interface to receive messages.
+
+        Args:
+            subject: The subject to subscribe to. Supports wildcards:
+                - "events.>" matches "events.user", "events.order.created", etc.
+                - "events.*" matches "events.user" but not "events.user.created"
+
+        Returns:
+            Subscription object for receiving messages.
+
+        Raises:
+            ConnectionError: If not connected to Athyr.
+            AthyrError: If the subscribe operation fails.
+
+        Example:
+            sub = await agent.subscribe("events.user.>")
+            async for msg in sub.messages():
+                print(f"Received on {msg.subject}: {msg.data}")
+            await sub.unsubscribe()
+        """
+        return await self._subscribe(subject, queue="")
+
+    async def queue_subscribe(self, subject: str, queue: str) -> Subscription:
+        """Subscribe to messages with queue group for load balancing.
+
+        Creates a queue subscription where messages are distributed across
+        all subscribers in the same queue group. Only one subscriber in the
+        group receives each message.
+
+        Args:
+            subject: The subject to subscribe to. Supports wildcards.
+            queue: The queue group name. Subscribers with the same queue
+                name share message load.
+
+        Returns:
+            Subscription object for receiving messages.
+
+        Raises:
+            ConnectionError: If not connected to Athyr.
+            AthyrError: If the subscribe operation fails.
+
+        Example:
+            # Multiple workers sharing load
+            sub = await agent.queue_subscribe("tasks.process", "workers")
+            async for msg in sub.messages():
+                process_task(msg.data)
+        """
+        return await self._subscribe(subject, queue=queue)
+
+    async def _subscribe(self, subject: str, queue: str) -> Subscription:
+        """Internal subscribe implementation.
+
+        Args:
+            subject: The subject to subscribe to.
+            queue: Queue group name (empty string for regular subscription).
+
+        Returns:
+            Subscription object.
+        """
+        stub = self._ensure_connected()
+
+        try:
+            stream = stub.Subscribe(
+                athyr_pb2.SubscribeRequest(
+                    agent_id=self._agent_id,
+                    subject=subject,
+                    queue_group=queue,
+                )
+            )
+
+            sub = Subscription(
+                subject=subject,
+                stream=stream,
+                cancel_fn=stream.cancel,
+            )
+
+            self._subscriptions.add(sub)
+            return sub
+        except grpc.RpcError as e:
+            raise from_grpc_error(e) from e
+
+    async def request(
+        self,
+        subject: str,
+        data: bytes,
+        timeout: float = 5.0,
+    ) -> bytes:
+        """Send a request and wait for a response (RPC pattern).
+
+        Sends a message to a subject and waits for a single response.
+        This implements the request/reply messaging pattern for
+        synchronous-style communication.
+
+        Args:
+            subject: The subject to send the request to.
+            data: The request payload as bytes.
+            timeout: Response timeout in seconds (default: 5.0).
+
+        Returns:
+            The response payload as bytes.
+
+        Raises:
+            ConnectionError: If not connected to Athyr.
+            TimeoutError: If no response received within timeout.
+            AthyrError: If the request fails.
+
+        Example:
+            response = await agent.request(
+                "services.calculator.add",
+                b'{"a": 1, "b": 2}',
+                timeout=10.0,
+            )
+            result = json.loads(response)
+        """
+        stub = self._ensure_connected()
+
+        try:
+            response = await stub.Request(
+                athyr_pb2.RequestMessage(
+                    agent_id=self._agent_id,
+                    subject=subject,
+                    data=data,
+                    timeout_ms=int(timeout * 1000),
+                )
+            )
+            return response.data
         except grpc.RpcError as e:
             raise from_grpc_error(e) from e
