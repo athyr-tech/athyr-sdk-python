@@ -16,6 +16,7 @@ from athyr.exceptions import (
     TimeoutError,
     UnavailableError,
 )
+from athyr.kv import Bucket, KVEntry
 from athyr.models import AgentCard, Session, SessionMessage, SessionProfile, Tool
 from athyr.tools import get_tool, is_tool, tool
 
@@ -31,6 +32,9 @@ __all__ = [
     "SessionMessage",
     "SessionProfile",
     "Tool",
+    # KV Storage
+    "Bucket",
+    "KVEntry",
     # Tools
     "tool",
     "get_tool",

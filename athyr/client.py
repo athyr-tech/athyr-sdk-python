@@ -11,6 +11,7 @@ import grpc
 
 from athyr._grpc import athyr_pb2, athyr_pb2_grpc
 from athyr.exceptions import ConnectionError, from_grpc_error
+from athyr.kv import Bucket
 from athyr.models import (
     AgentCard,
     CompletionRequest,
@@ -75,6 +76,10 @@ class Agent(Protocol):
 
     async def delete_session(self, session_id: str) -> None:
         """Delete a session."""
+        ...
+
+    def kv(self, bucket: str) -> Bucket:
+        """Get a KV bucket for key-value operations."""
         ...
 
 
@@ -607,3 +612,35 @@ class AthyrAgent:
             await stub.DeleteSession(request)
         except grpc.RpcError as e:
             raise from_grpc_error(e) from e
+
+    # KV Storage Operations
+
+    def kv(self, bucket: str) -> Bucket:
+        """Get a KV bucket for key-value operations.
+
+        Returns a bucket-scoped wrapper that provides get, put, delete,
+        and keys operations without needing to specify the bucket name
+        on each call.
+
+        Args:
+            bucket: The bucket name.
+
+        Returns:
+            Bucket wrapper for KV operations.
+
+        Raises:
+            ConnectionError: If not connected to Athyr.
+
+        Example:
+            bucket = agent.kv("user-settings")
+            await bucket.put("theme", b"dark")
+            entry = await bucket.get("theme")
+            print(entry.value)  # b"dark"
+        """
+        stub = self._ensure_connected()
+        return Bucket(
+            bucket=bucket,
+            agent_id=self._agent_id,
+            stub=stub,
+            connected_check=lambda: self._ensure_connected(),
+        )
