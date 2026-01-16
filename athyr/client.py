@@ -18,6 +18,7 @@ from athyr.models import (
     Model,
     StreamChunk,
 )
+from athyr.subscription import Subscription
 
 
 logger = logging.getLogger(__name__)
@@ -81,6 +82,7 @@ class AthyrAgent:
         self._agent_id: str = ""
         self._connected: bool = False
         self._heartbeat_task: asyncio.Task[None] | None = None
+        self._subscriptions: set[Subscription] = set()
 
     async def connect(self) -> None:
         """Connect to Athyr server and register the agent."""
@@ -139,6 +141,11 @@ class AthyrAgent:
             return
 
         try:
+            # Cancel all active subscriptions
+            for sub in list(self._subscriptions):
+                await sub.unsubscribe()
+            self._subscriptions.clear()
+
             # Stop heartbeat
             if self._heartbeat_task:
                 self._heartbeat_task.cancel()
@@ -192,6 +199,11 @@ class AthyrAgent:
     def agent_id(self) -> str:
         """Get the assigned agent ID."""
         return self._agent_id
+
+    @property
+    def subscriptions(self) -> set[Subscription]:
+        """Get active subscriptions."""
+        return self._subscriptions
 
     # Context manager support
 

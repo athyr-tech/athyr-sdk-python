@@ -272,6 +272,26 @@ class Model(BaseModel):
         )
 
 
+# Messaging models
+
+
+class SubscribeMessage(BaseModel):
+    """Message received from a subscription."""
+
+    subject: str
+    data: bytes
+    reply: str = ""  # Reply subject for request/reply pattern
+
+    @classmethod
+    def from_proto(cls, proto: athyr_pb2.SubscribeMessage) -> "SubscribeMessage":
+        """Create from protobuf message."""
+        return cls(
+            subject=proto.subject,
+            data=proto.data,
+            reply=proto.reply,
+        )
+
+
 # Session-related models (for Epic 3, but defining here for completeness)
 
 
