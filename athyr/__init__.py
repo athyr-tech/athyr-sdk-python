@@ -16,7 +16,8 @@ from athyr.exceptions import (
     TimeoutError,
     UnavailableError,
 )
-from athyr.models import AgentCard
+from athyr.models import AgentCard, Tool
+from athyr.tools import get_tool, is_tool, tool
 
 __all__ = [
     # Version
@@ -26,6 +27,11 @@ __all__ = [
     "AthyrAgent",
     # Models
     "AgentCard",
+    "Tool",
+    # Tools
+    "tool",
+    "get_tool",
+    "is_tool",
     # Exceptions
     "AthyrError",
     "AuthenticationError",
