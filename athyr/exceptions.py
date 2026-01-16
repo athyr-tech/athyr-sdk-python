@@ -83,6 +83,19 @@ class ResourceExhaustedError(AthyrError):
     pass
 
 
+class MaxIterationsError(AthyrError):
+    """Tool execution loop exceeded maximum iterations."""
+
+    def __init__(
+        self,
+        message: str = "Tool loop exceeded maximum iterations",
+        *,
+        iterations: int = 0,
+    ) -> None:
+        super().__init__(message)
+        self.iterations = iterations
+
+
 class StreamError(AthyrError):
     """Error during streaming operation."""
 

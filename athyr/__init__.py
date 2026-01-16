@@ -10,6 +10,7 @@ from athyr.exceptions import (
     ConnectionError,
     InternalError,
     InvalidRequestError,
+    MaxIterationsError,
     NotFoundError,
     ResourceExhaustedError,
     StreamError,
@@ -17,8 +18,8 @@ from athyr.exceptions import (
     UnavailableError,
 )
 from athyr.kv import Bucket, KVEntry
-from athyr.models import AgentCard, Session, SessionMessage, SessionProfile, Tool
-from athyr.tools import get_tool, is_tool, tool
+from athyr.models import AgentCard, Message, Session, SessionMessage, SessionProfile, Tool
+from athyr.tools import ToolRegistry, get_tool, is_tool, run_tool_loop, tool
 
 __all__ = [
     # Version
@@ -28,6 +29,7 @@ __all__ = [
     "AthyrAgent",
     # Models
     "AgentCard",
+    "Message",
     "Session",
     "SessionMessage",
     "SessionProfile",
@@ -39,6 +41,8 @@ __all__ = [
     "tool",
     "get_tool",
     "is_tool",
+    "ToolRegistry",
+    "run_tool_loop",
     # Exceptions
     "AthyrError",
     "AuthenticationError",
@@ -46,6 +50,7 @@ __all__ = [
     "ConnectionError",
     "InternalError",
     "InvalidRequestError",
+    "MaxIterationsError",
     "NotFoundError",
     "ResourceExhaustedError",
     "StreamError",

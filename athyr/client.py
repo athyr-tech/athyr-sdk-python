@@ -78,6 +78,10 @@ class Agent(Protocol):
         """Delete a session."""
         ...
 
+    async def add_hint(self, session_id: str, hint: str) -> None:
+        """Add a hint to a session."""
+        ...
+
     def kv(self, bucket: str) -> Bucket:
         """Get a KV bucket for key-value operations."""
         ...
@@ -610,6 +614,37 @@ class AthyrAgent:
                 session_id=session_id,
             )
             await stub.DeleteSession(request)
+        except grpc.RpcError as e:
+            raise from_grpc_error(e) from e
+
+    async def add_hint(self, session_id: str, hint: str) -> None:
+        """Add a hint to a session.
+
+        Hints are persistent notes that influence LLM responses for
+        this session. Use hints to provide context that should be
+        remembered across conversations.
+
+        Args:
+            session_id: The session ID to add the hint to.
+            hint: The hint text to add.
+
+        Raises:
+            ConnectionError: If not connected to Athyr.
+            NotFoundError: If session doesn't exist.
+            AthyrError: If the operation fails.
+
+        Example:
+            await agent.add_hint(session.id, "User prefers concise responses")
+        """
+        stub = self._ensure_connected()
+
+        try:
+            request = athyr_pb2.AddHintRequest(
+                agent_id=self._agent_id,
+                session_id=session_id,
+                hint=hint,
+            )
+            await stub.AddHint(request)
         except grpc.RpcError as e:
             raise from_grpc_error(e) from e
 

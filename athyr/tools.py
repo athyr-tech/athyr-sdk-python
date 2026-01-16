@@ -5,12 +5,16 @@ from __future__ import annotations
 import functools
 import inspect
 import json
-from typing import Any, Callable, TypeVar, get_type_hints
+from typing import TYPE_CHECKING, Any, Callable, TypeVar, get_type_hints
 
 from pydantic import BaseModel, Field, create_model
 from pydantic.fields import FieldInfo
 
-from athyr.models import Tool
+from athyr.exceptions import MaxIterationsError
+from athyr.models import CompletionRequest, CompletionResponse, Message, Tool
+
+if TYPE_CHECKING:
+    from athyr.client import Agent
 
 F = TypeVar("F", bound=Callable[..., Any])
 
@@ -261,3 +265,280 @@ def _extract_param_description(func: Callable[..., Any], param_name: str) -> str
 
     param_desc_parts = descriptions.get(param_name, [])
     return " ".join(param_desc_parts)
+
+
+class ToolRegistry:
+    """Registry for collecting and managing decorated tools.
+
+    Provides a central place to register @tool decorated functions,
+    retrieve Tool definitions for completion requests, and execute
+    tools by name.
+
+    Example:
+        from athyr import tool, ToolRegistry
+
+        registry = ToolRegistry()
+
+        @tool
+        def get_weather(city: str) -> str:
+            '''Get weather for a city.'''
+            return f"Sunny in {city}"
+
+        @tool
+        def calculate(expr: str) -> str:
+            '''Evaluate math expression.'''
+            return str(eval(expr))
+
+        # Register tools
+        registry.register(get_weather)
+        registry.register(calculate)
+
+        # Use in completion request
+        request = CompletionRequest(
+            model=model,
+            messages=messages,
+            tools=registry.tools(),
+        )
+
+        # Execute tool calls from LLM response
+        for tc in response.tool_calls:
+            result = registry.execute(tc.name, tc.arguments)
+    """
+
+    def __init__(self) -> None:
+        """Initialize an empty tool registry."""
+        self._tools: dict[str, Callable[..., Any]] = {}
+
+    def register(self, func: Callable[..., Any]) -> Callable[..., Any]:
+        """Register a @tool decorated function.
+
+        Args:
+            func: A function decorated with @tool.
+
+        Returns:
+            The same function (allows use as decorator).
+
+        Raises:
+            ValueError: If the function is not decorated with @tool.
+            ValueError: If a tool with the same name is already registered.
+
+        Example:
+            @tool
+            def my_func(x: int) -> str:
+                '''Do something.'''
+                return str(x)
+
+            registry.register(my_func)
+
+            # Or use as a decorator
+            @registry.register
+            @tool
+            def another_func(y: str) -> int:
+                '''Do something else.'''
+                return len(y)
+        """
+        tool_def = get_tool(func)
+        if tool_def is None:
+            raise ValueError(
+                f"Function '{func.__name__}' is not decorated with @tool"
+            )
+
+        if tool_def.name in self._tools:
+            raise ValueError(
+                f"Tool '{tool_def.name}' is already registered"
+            )
+
+        self._tools[tool_def.name] = func
+        return func
+
+    def get(self, name: str) -> Callable[..., Any] | None:
+        """Get a tool function by name.
+
+        Args:
+            name: The tool name.
+
+        Returns:
+            The registered function, or None if not found.
+        """
+        return self._tools.get(name)
+
+    def tools(self) -> list[Tool]:
+        """Get all Tool definitions for completion requests.
+
+        Returns:
+            List of Tool objects ready to pass to CompletionRequest.
+
+        Example:
+            request = CompletionRequest(
+                model=model,
+                messages=messages,
+                tools=registry.tools(),
+            )
+        """
+        result: list[Tool] = []
+        for func in self._tools.values():
+            tool_def = get_tool(func)
+            if tool_def:
+                result.append(tool_def)
+        return result
+
+    def execute(self, name: str, arguments: str) -> str:
+        """Execute a tool by name with JSON arguments.
+
+        Parses the JSON arguments, calls the tool function, and
+        returns the result as a JSON string.
+
+        Args:
+            name: The tool name to execute.
+            arguments: JSON string of arguments.
+
+        Returns:
+            The tool result as a JSON string.
+
+        Raises:
+            KeyError: If the tool is not registered.
+            json.JSONDecodeError: If arguments is not valid JSON.
+            Exception: Any exception from the tool function.
+
+        Example:
+            result = registry.execute("get_weather", '{"city": "Paris"}')
+            # result: '{"temperature": "22°C", "conditions": "sunny"}'
+        """
+        if name not in self._tools:
+            raise KeyError(f"Tool '{name}' is not registered")
+
+        func = self._tools[name]
+        args = json.loads(arguments)
+        result = func(**args)
+        return json.dumps(result)
+
+    def __contains__(self, name: str) -> bool:
+        """Check if a tool is registered.
+
+        Example:
+            if "get_weather" in registry:
+                ...
+        """
+        return name in self._tools
+
+    def __len__(self) -> int:
+        """Get the number of registered tools."""
+        return len(self._tools)
+
+    def __iter__(self):
+        """Iterate over tool names."""
+        return iter(self._tools)
+
+    def names(self) -> list[str]:
+        """Get list of registered tool names."""
+        return list(self._tools.keys())
+
+
+async def run_tool_loop(
+    agent: Agent,
+    model: str,
+    messages: list[Message],
+    registry: ToolRegistry,
+    *,
+    max_iterations: int = 10,
+    system_prompt: str | None = None,
+    on_tool_call: Callable[[str, str, str], None] | None = None,
+) -> CompletionResponse:
+    """Run an agentic tool-calling loop until completion.
+
+    Executes a loop that:
+    1. Sends messages + tools to the LLM
+    2. If LLM requests tools → executes them, adds results to messages
+    3. Repeats until LLM responds with text (no tool calls)
+
+    Args:
+        agent: Connected Athyr agent.
+        model: Model identifier to use.
+        messages: Initial conversation messages.
+        registry: ToolRegistry containing available tools.
+        max_iterations: Maximum loop iterations (safety limit).
+        system_prompt: Optional system prompt to prepend.
+        on_tool_call: Optional callback called for each tool execution.
+            Receives (tool_name, arguments, result).
+
+    Returns:
+        Final CompletionResponse with LLM's text response.
+
+    Raises:
+        MaxIterationsError: If loop exceeds max_iterations.
+        KeyError: If LLM calls an unregistered tool.
+        AthyrError: If LLM completion fails.
+
+    Example:
+        from athyr import AthyrAgent, ToolRegistry, run_tool_loop, tool, Message
+
+        registry = ToolRegistry()
+
+        @tool
+        def get_weather(city: str) -> str:
+            '''Get weather for a city.'''
+            return f"Sunny in {city}"
+
+        registry.register(get_weather)
+
+        async with AthyrAgent("localhost:9090") as agent:
+            response = await run_tool_loop(
+                agent=agent,
+                model="gpt-4",
+                messages=[Message(role="user", content="What's the weather in Paris?")],
+                registry=registry,
+            )
+            print(response.content)
+    """
+    # Build message list with optional system prompt
+    msgs: list[Message] = []
+    if system_prompt:
+        msgs.append(Message(role="system", content=system_prompt))
+    msgs.extend(messages)
+
+    for iteration in range(max_iterations):
+        # Make completion request with tools
+        response = await agent.complete(
+            CompletionRequest(
+                model=model,
+                messages=msgs,
+                tools=registry.tools(),
+                tool_choice="auto",
+            )
+        )
+
+        # No tool calls = LLM is done
+        if not response.tool_calls:
+            return response
+
+        # Add assistant message with tool calls to history
+        msgs.append(
+            Message(
+                role="assistant",
+                content=response.content,
+                tool_calls=response.tool_calls,
+            )
+        )
+
+        # Execute each tool and add results
+        for tc in response.tool_calls:
+            result = registry.execute(tc.name, tc.arguments)
+
+            # Optional callback for observability
+            if on_tool_call:
+                on_tool_call(tc.name, tc.arguments, result)
+
+            # Add tool result message
+            msgs.append(
+                Message(
+                    role="tool",
+                    content=result,
+                    tool_call_id=tc.id,
+                )
+            )
+
+    # Exceeded max iterations
+    raise MaxIterationsError(
+        f"Tool loop exceeded {max_iterations} iterations",
+        iterations=max_iterations,
+    )
