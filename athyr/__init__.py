@@ -19,6 +19,7 @@ from athyr.exceptions import (
     UnavailableError,
 )
 from athyr.kv import Bucket, KVEntry
+from athyr.middleware import Handler, Middleware, MiddlewareContext, chain, middleware
 from athyr.models import AgentCard, Message, Session, SessionMessage, SessionProfile, Tool
 from athyr.tools import ToolRegistry, get_tool, is_tool, run_tool_loop, tool
 
@@ -41,6 +42,12 @@ __all__ = [
     # KV Storage
     "Bucket",
     "KVEntry",
+    # Middleware
+    "Handler",
+    "Middleware",
+    "MiddlewareContext",
+    "chain",
+    "middleware",
     # Tools
     "tool",
     "get_tool",
