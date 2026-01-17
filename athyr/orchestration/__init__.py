@@ -21,6 +21,18 @@ from athyr.orchestration.fanout import (
     first_success,
     require_quorum,
 )
+from athyr.orchestration.groupchat import (
+    ChatError,
+    ChatRequest,
+    ChatResponse,
+    ChatTrace,
+    ConsensusFunc,
+    GroupChat,
+    Manager,
+    Message,
+    func_manager,
+    round_robin,
+)
 from athyr.orchestration.handoff import (
     HandoffDecision,
     HandoffError,
@@ -57,4 +69,15 @@ __all__ = [
     "HandoffTrace",
     "HandoffStep",
     "HandoffError",
+    # GroupChat
+    "GroupChat",
+    "ChatTrace",
+    "ChatRequest",
+    "ChatResponse",
+    "ChatError",
+    "Message",
+    "Manager",
+    "ConsensusFunc",
+    "round_robin",
+    "func_manager",
 ]
