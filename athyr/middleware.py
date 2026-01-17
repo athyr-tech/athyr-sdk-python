@@ -26,6 +26,7 @@ Example:
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import time
@@ -36,6 +37,8 @@ from typing import TYPE_CHECKING, Any, Protocol, TypeVar, overload
 
 if TYPE_CHECKING:
     from athyr.client import AthyrAgent
+
+from athyr.exceptions import TimeoutError as AthyrTimeoutError
 
 # Default logger for built-in middlewares
 _logger = logging.getLogger("athyr.middleware")
@@ -300,5 +303,50 @@ def log_requests(logger: logging.Logger | None = None) -> Middleware:
                 raise
 
         return logging_handler
+
+    return middleware_factory
+
+
+def timeout(seconds: float) -> Middleware:
+    """Create middleware that enforces a request timeout.
+
+    If the handler doesn't complete within the specified duration,
+    the request is cancelled and a TimeoutError is raised.
+
+    Args:
+        seconds: Maximum time in seconds to wait for the handler.
+
+    Returns:
+        A Middleware that enforces the timeout.
+
+    Raises:
+        athyr.TimeoutError: If the handler doesn't complete in time.
+
+    Example:
+        # 5 second timeout
+        mw = timeout(5.0)
+
+        # Chain with other middlewares
+        combined = chain(log_requests(), timeout(10.0))
+
+        # Apply to handler
+        handler = combined(my_handler)
+    """
+
+    def middleware_factory(next_handler: Handler) -> Handler:
+        async def timeout_handler(ctx: MiddlewareContext, data: bytes) -> bytes:
+            try:
+                return await asyncio.wait_for(
+                    next_handler(ctx, data),
+                    timeout=seconds,
+                )
+            except asyncio.TimeoutError:
+                raise AthyrTimeoutError(
+                    f"Request timed out after {seconds}s",
+                    code="timeout",
+                    details=f"subject={ctx.subject}",
+                )
+
+        return timeout_handler
 
     return middleware_factory

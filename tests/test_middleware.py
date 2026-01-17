@@ -13,7 +13,9 @@ from athyr.middleware import (
     log_requests,
     middleware,
     passthrough_handler,
+    timeout,
 )
+from athyr.exceptions import TimeoutError as AthyrTimeoutError
 
 
 @pytest.fixture
@@ -579,3 +581,115 @@ class TestLogRequests:
 
         log_data = json.loads(log_records[0].getMessage())
         assert "CustomError" in log_data["error"]
+
+
+class TestTimeout:
+    """Tests for timeout built-in middleware."""
+
+    @pytest.mark.asyncio
+    async def test_fast_handler_completes(self, ctx: MiddlewareContext) -> None:
+        """Test fast handler completes successfully within timeout."""
+
+        async def fast_handler(ctx, data):
+            return b"fast response"
+
+        mw = timeout(1.0)
+        wrapped = mw(fast_handler)
+        result = await wrapped(ctx, b"input")
+
+        assert result == b"fast response"
+
+    @pytest.mark.asyncio
+    async def test_slow_handler_times_out(self, ctx: MiddlewareContext) -> None:
+        """Test slow handler raises TimeoutError."""
+        import asyncio
+
+        async def slow_handler(ctx, data):
+            await asyncio.sleep(1.0)
+            return b"slow response"
+
+        mw = timeout(0.05)  # 50ms timeout
+        wrapped = mw(slow_handler)
+
+        with pytest.raises(AthyrTimeoutError) as exc_info:
+            await wrapped(ctx, b"input")
+
+        assert "timed out" in str(exc_info.value)
+        assert exc_info.value.code == "timeout"
+        assert "test.subject" in exc_info.value.details
+
+    @pytest.mark.asyncio
+    async def test_timeout_cancels_handler(self, ctx: MiddlewareContext) -> None:
+        """Test timeout cancels the underlying handler task."""
+        import asyncio
+
+        cancelled = False
+
+        async def cancellable_handler(ctx, data):
+            nonlocal cancelled
+            try:
+                await asyncio.sleep(10.0)
+                return b"should not reach"
+            except asyncio.CancelledError:
+                cancelled = True
+                raise
+
+        mw = timeout(0.05)
+        wrapped = mw(cancellable_handler)
+
+        with pytest.raises(AthyrTimeoutError):
+            await wrapped(ctx, b"input")
+
+        # Give a moment for cancellation to propagate
+        await asyncio.sleep(0.01)
+        assert cancelled is True
+
+    @pytest.mark.asyncio
+    async def test_timeout_with_exact_duration(self, ctx: MiddlewareContext) -> None:
+        """Test handler completing just under timeout succeeds."""
+        import asyncio
+
+        async def just_in_time_handler(ctx, data):
+            await asyncio.sleep(0.02)  # 20ms
+            return b"made it"
+
+        mw = timeout(0.1)  # 100ms timeout
+        wrapped = mw(just_in_time_handler)
+        result = await wrapped(ctx, b"input")
+
+        assert result == b"made it"
+
+    @pytest.mark.asyncio
+    async def test_timeout_chains_with_other_middleware(
+        self, ctx: MiddlewareContext
+    ) -> None:
+        """Test timeout works in middleware chain."""
+
+        @middleware
+        async def prefix_middleware(ctx, data, call_next):
+            result = await call_next(ctx, data)
+            return b"PREFIX:" + result
+
+        async def handler(ctx, data):
+            return b"data"
+
+        combined = chain(timeout(1.0), prefix_middleware)
+        wrapped = combined(handler)
+        result = await wrapped(ctx, b"input")
+
+        assert result == b"PREFIX:data"
+
+    @pytest.mark.asyncio
+    async def test_timeout_preserves_handler_exceptions(
+        self, ctx: MiddlewareContext
+    ) -> None:
+        """Test timeout doesn't swallow handler exceptions."""
+
+        async def failing_handler(ctx, data):
+            raise ValueError("handler error")
+
+        mw = timeout(1.0)
+        wrapped = mw(failing_handler)
+
+        with pytest.raises(ValueError, match="handler error"):
+            await wrapped(ctx, b"input")
