@@ -26,6 +26,7 @@ from athyr.middleware import (
     chain,
     log_requests,
     middleware,
+    retry,
     timeout,
 )
 from athyr.models import AgentCard, Message, Session, SessionMessage, SessionProfile, Tool
@@ -57,6 +58,7 @@ __all__ = [
     "chain",
     "log_requests",
     "middleware",
+    "retry",
     "timeout",
     # Tools
     "tool",

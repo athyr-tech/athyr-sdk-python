@@ -29,6 +29,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import random
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
@@ -38,7 +39,7 @@ from typing import TYPE_CHECKING, Any, Protocol, TypeVar, overload
 if TYPE_CHECKING:
     from athyr.client import AthyrAgent
 
-from athyr.exceptions import TimeoutError as AthyrTimeoutError
+from athyr.exceptions import TimeoutError as AthyrTimeoutError, UnavailableError
 
 # Default logger for built-in middlewares
 _logger = logging.getLogger("athyr.middleware")
@@ -348,5 +349,76 @@ def timeout(seconds: float) -> Middleware:
                 )
 
         return timeout_handler
+
+    return middleware_factory
+
+
+def retry(
+    max_attempts: int = 3,
+    base_backoff: float = 1.0,
+    max_backoff: float = 30.0,
+) -> Middleware:
+    """Create middleware that retries failed requests with exponential backoff.
+
+    Only retries on UnavailableError (transient errors). Other exceptions
+    are propagated immediately without retry.
+
+    Uses exponential backoff with jitter: base * 2^attempt * jitter
+    where jitter is random between 0.5 and 1.5.
+
+    Args:
+        max_attempts: Maximum number of attempts (including initial). Default 3.
+        base_backoff: Initial backoff in seconds. Default 1.0.
+        max_backoff: Maximum backoff in seconds. Default 30.0.
+
+    Returns:
+        A Middleware that retries failed requests.
+
+    Raises:
+        UnavailableError: If all retry attempts fail.
+        Other exceptions: Propagated immediately without retry.
+
+    Example:
+        # Retry up to 3 times with 1s base backoff
+        mw = retry()
+
+        # Custom retry settings
+        mw = retry(max_attempts=5, base_backoff=0.5, max_backoff=10.0)
+
+        # Chain with timeout
+        combined = chain(retry(3), timeout(10.0))
+    """
+
+    def calculate_backoff(attempt: int) -> float:
+        """Calculate exponential backoff with jitter."""
+        backoff = min(base_backoff * (2**attempt), max_backoff)
+        jitter = 0.5 + random.random()  # 0.5 to 1.5
+        return backoff * jitter
+
+    def middleware_factory(next_handler: Handler) -> Handler:
+        async def retry_handler(ctx: MiddlewareContext, data: bytes) -> bytes:
+            last_error: Exception | None = None
+
+            for attempt in range(max_attempts):
+                try:
+                    return await next_handler(ctx, data)
+                except UnavailableError as e:
+                    last_error = e
+                    # Don't sleep after the last attempt
+                    if attempt < max_attempts - 1:
+                        backoff = calculate_backoff(attempt)
+                        await asyncio.sleep(backoff)
+                # Other exceptions propagate immediately
+                except Exception:
+                    raise
+
+            # All attempts failed
+            raise UnavailableError(
+                f"Max retries ({max_attempts}) exceeded",
+                code="unavailable",
+                details=f"subject={ctx.subject}, last_error={last_error}",
+            )
+
+        return retry_handler
 
     return middleware_factory

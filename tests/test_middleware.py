@@ -1,5 +1,6 @@
 """Tests for middleware system."""
 
+import asyncio
 import json
 import logging
 import pytest
@@ -13,9 +14,10 @@ from athyr.middleware import (
     log_requests,
     middleware,
     passthrough_handler,
+    retry,
     timeout,
 )
-from athyr.exceptions import TimeoutError as AthyrTimeoutError
+from athyr.exceptions import TimeoutError as AthyrTimeoutError, UnavailableError
 
 
 @pytest.fixture
@@ -693,3 +695,185 @@ class TestTimeout:
 
         with pytest.raises(ValueError, match="handler error"):
             await wrapped(ctx, b"input")
+
+
+class TestRetry:
+    """Tests for retry built-in middleware."""
+
+    @pytest.mark.asyncio
+    async def test_success_on_first_attempt(self, ctx: MiddlewareContext) -> None:
+        """Test successful handler doesn't retry."""
+        attempts = 0
+
+        async def handler(ctx, data):
+            nonlocal attempts
+            attempts += 1
+            return b"success"
+
+        mw = retry(max_attempts=3)
+        wrapped = mw(handler)
+        result = await wrapped(ctx, b"input")
+
+        assert result == b"success"
+        assert attempts == 1
+
+    @pytest.mark.asyncio
+    async def test_retries_on_unavailable_error(self, ctx: MiddlewareContext) -> None:
+        """Test retries on UnavailableError."""
+        attempts = 0
+
+        async def flaky_handler(ctx, data):
+            nonlocal attempts
+            attempts += 1
+            if attempts < 3:
+                raise UnavailableError("temporarily unavailable")
+            return b"success"
+
+        mw = retry(max_attempts=3, base_backoff=0.01)
+        wrapped = mw(flaky_handler)
+        result = await wrapped(ctx, b"input")
+
+        assert result == b"success"
+        assert attempts == 3
+
+    @pytest.mark.asyncio
+    async def test_raises_after_max_attempts(self, ctx: MiddlewareContext) -> None:
+        """Test raises UnavailableError after max attempts exceeded."""
+        attempts = 0
+
+        async def always_fails(ctx, data):
+            nonlocal attempts
+            attempts += 1
+            raise UnavailableError("always fails")
+
+        mw = retry(max_attempts=3, base_backoff=0.01)
+        wrapped = mw(always_fails)
+
+        with pytest.raises(UnavailableError) as exc_info:
+            await wrapped(ctx, b"input")
+
+        assert attempts == 3
+        assert "Max retries (3) exceeded" in str(exc_info.value)
+        assert "test.subject" in exc_info.value.details
+
+    @pytest.mark.asyncio
+    async def test_does_not_retry_other_exceptions(
+        self, ctx: MiddlewareContext
+    ) -> None:
+        """Test non-UnavailableError exceptions are not retried."""
+        attempts = 0
+
+        async def handler(ctx, data):
+            nonlocal attempts
+            attempts += 1
+            raise ValueError("not retryable")
+
+        mw = retry(max_attempts=3, base_backoff=0.01)
+        wrapped = mw(handler)
+
+        with pytest.raises(ValueError, match="not retryable"):
+            await wrapped(ctx, b"input")
+
+        assert attempts == 1  # No retry
+
+    @pytest.mark.asyncio
+    async def test_exponential_backoff(self, ctx: MiddlewareContext) -> None:
+        """Test backoff increases exponentially."""
+        import time
+
+        timestamps: list[float] = []
+
+        async def failing_handler(ctx, data):
+            timestamps.append(time.perf_counter())
+            raise UnavailableError("fail")
+
+        mw = retry(max_attempts=4, base_backoff=0.05, max_backoff=10.0)
+        wrapped = mw(failing_handler)
+
+        with pytest.raises(UnavailableError):
+            await wrapped(ctx, b"input")
+
+        # Check gaps between attempts increase
+        # With jitter, we can't be exact, but gaps should generally increase
+        assert len(timestamps) == 4
+        gap1 = timestamps[1] - timestamps[0]
+        gap2 = timestamps[2] - timestamps[1]
+        gap3 = timestamps[3] - timestamps[2]
+
+        # First gap: ~0.05s * jitter, second: ~0.1s * jitter, third: ~0.2s * jitter
+        # With jitter range 0.5-1.5, gaps should be in reasonable ranges
+        assert gap1 >= 0.02  # base * 0.5 minimum
+        assert gap2 >= 0.04  # 2x base * 0.5 minimum
+        assert gap3 >= 0.08  # 4x base * 0.5 minimum
+
+    @pytest.mark.asyncio
+    async def test_max_backoff_caps_delay(self, ctx: MiddlewareContext) -> None:
+        """Test backoff is capped at max_backoff."""
+        import time
+
+        timestamps: list[float] = []
+
+        async def failing_handler(ctx, data):
+            timestamps.append(time.perf_counter())
+            raise UnavailableError("fail")
+
+        # Very small max_backoff to cap quickly
+        mw = retry(max_attempts=3, base_backoff=1.0, max_backoff=0.05)
+        wrapped = mw(failing_handler)
+
+        with pytest.raises(UnavailableError):
+            await wrapped(ctx, b"input")
+
+        # All gaps should be around max_backoff (0.05s) with jitter
+        gap1 = timestamps[1] - timestamps[0]
+        gap2 = timestamps[2] - timestamps[1]
+
+        # Both should be capped at ~0.05 * jitter
+        assert gap1 < 0.15  # max_backoff * 1.5 (max jitter) + overhead
+        assert gap2 < 0.15
+
+    @pytest.mark.asyncio
+    async def test_default_max_attempts(self, ctx: MiddlewareContext) -> None:
+        """Test retry uses default max_attempts=3."""
+        attempts = 0
+
+        async def handler(ctx, data):
+            nonlocal attempts
+            attempts += 1
+            if attempts < 2:
+                raise UnavailableError("fail once")
+            return b"ok"
+
+        # Use small backoff but default max_attempts
+        mw = retry(base_backoff=0.01)
+        wrapped = mw(handler)
+        result = await wrapped(ctx, b"input")
+
+        assert result == b"ok"
+        assert attempts == 2
+
+    @pytest.mark.asyncio
+    async def test_chains_with_other_middleware(
+        self, ctx: MiddlewareContext
+    ) -> None:
+        """Test retry works in middleware chain."""
+        attempts = 0
+
+        @middleware
+        async def prefix_middleware(ctx, data, call_next):
+            result = await call_next(ctx, data)
+            return b"PREFIX:" + result
+
+        async def flaky_handler(ctx, data):
+            nonlocal attempts
+            attempts += 1
+            if attempts < 2:
+                raise UnavailableError("fail once")
+            return b"data"
+
+        combined = chain(retry(max_attempts=3, base_backoff=0.01), prefix_middleware)
+        wrapped = combined(flaky_handler)
+        result = await wrapped(ctx, b"input")
+
+        assert result == b"PREFIX:data"
+        assert attempts == 2
