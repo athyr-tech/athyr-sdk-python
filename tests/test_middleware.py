@@ -1,5 +1,7 @@
 """Tests for middleware system."""
 
+import json
+import logging
 import pytest
 from unittest.mock import MagicMock
 
@@ -8,6 +10,7 @@ from athyr.middleware import (
     Middleware,
     MiddlewareContext,
     chain,
+    log_requests,
     middleware,
     passthrough_handler,
 )
@@ -426,3 +429,153 @@ class TestMiddlewareIntegration:
         result = await wrapped(ctx, b"input")
 
         assert result == b"timeout"
+
+
+class TestLogRequests:
+    """Tests for log_requests built-in middleware."""
+
+    @pytest.fixture
+    def log_capture(self) -> logging.Logger:
+        """Create a logger that captures log records."""
+        logger = logging.getLogger("test.log_requests")
+        logger.setLevel(logging.DEBUG)
+        logger.handlers.clear()
+        return logger
+
+    @pytest.fixture
+    def log_records(self, log_capture: logging.Logger) -> list[logging.LogRecord]:
+        """Capture log records from the test logger."""
+        records: list[logging.LogRecord] = []
+
+        class RecordHandler(logging.Handler):
+            def emit(self, record: logging.LogRecord) -> None:
+                records.append(record)
+
+        log_capture.addHandler(RecordHandler())
+        return records
+
+    @pytest.mark.asyncio
+    async def test_logs_successful_request(
+        self, ctx: MiddlewareContext, log_capture: logging.Logger, log_records: list
+    ) -> None:
+        """Test log_requests logs INFO for successful requests."""
+
+        async def handler(ctx, data):
+            return b"response data"
+
+        mw = log_requests(log_capture)
+        wrapped = mw(handler)
+        result = await wrapped(ctx, b"input")
+
+        assert result == b"response data"
+        assert len(log_records) == 1
+        assert log_records[0].levelno == logging.INFO
+
+        log_data = json.loads(log_records[0].getMessage())
+        assert log_data["subject"] == "test.subject"
+        assert log_data["response_bytes"] == 13
+        assert "duration_ms" in log_data
+        assert log_data["duration_ms"] >= 0
+
+    @pytest.mark.asyncio
+    async def test_logs_failed_request(
+        self, ctx: MiddlewareContext, log_capture: logging.Logger, log_records: list
+    ) -> None:
+        """Test log_requests logs ERROR for failed requests."""
+
+        async def failing_handler(ctx, data):
+            raise ValueError("something went wrong")
+
+        mw = log_requests(log_capture)
+        wrapped = mw(failing_handler)
+
+        with pytest.raises(ValueError, match="something went wrong"):
+            await wrapped(ctx, b"input")
+
+        assert len(log_records) == 1
+        assert log_records[0].levelno == logging.ERROR
+
+        log_data = json.loads(log_records[0].getMessage())
+        assert log_data["subject"] == "test.subject"
+        assert log_data["error"] == "ValueError: something went wrong"
+        assert "duration_ms" in log_data
+
+    @pytest.mark.asyncio
+    async def test_uses_default_logger(self, ctx: MiddlewareContext) -> None:
+        """Test log_requests uses default logger when none provided."""
+        # Just verify it doesn't raise
+        mw = log_requests()
+
+        async def handler(ctx, data):
+            return b"ok"
+
+        wrapped = mw(handler)
+        result = await wrapped(ctx, b"input")
+        assert result == b"ok"
+
+    @pytest.mark.asyncio
+    async def test_chains_with_other_middleware(
+        self, ctx: MiddlewareContext, log_capture: logging.Logger, log_records: list
+    ) -> None:
+        """Test log_requests works in middleware chain."""
+
+        @middleware
+        async def prefix_middleware(ctx, data, call_next):
+            result = await call_next(ctx, data)
+            return b"PREFIX:" + result
+
+        async def handler(ctx, data):
+            return b"data"
+
+        combined = chain(log_requests(log_capture), prefix_middleware)
+        wrapped = combined(handler)
+        result = await wrapped(ctx, b"input")
+
+        assert result == b"PREFIX:data"
+        assert len(log_records) == 1
+
+        log_data = json.loads(log_records[0].getMessage())
+        # Logged response includes the prefix since log_requests is outermost
+        assert log_data["response_bytes"] == 11  # len(b"PREFIX:data")
+
+    @pytest.mark.asyncio
+    async def test_measures_accurate_duration(
+        self, ctx: MiddlewareContext, log_capture: logging.Logger, log_records: list
+    ) -> None:
+        """Test log_requests measures duration accurately."""
+        import asyncio
+
+        async def slow_handler(ctx, data):
+            await asyncio.sleep(0.05)  # 50ms
+            return b"done"
+
+        mw = log_requests(log_capture)
+        wrapped = mw(slow_handler)
+        await wrapped(ctx, b"input")
+
+        log_data = json.loads(log_records[0].getMessage())
+        # Should be at least 50ms
+        assert log_data["duration_ms"] >= 50
+        # But not too long (allow some overhead)
+        assert log_data["duration_ms"] < 200
+
+    @pytest.mark.asyncio
+    async def test_preserves_exception_type(
+        self, ctx: MiddlewareContext, log_capture: logging.Logger, log_records: list
+    ) -> None:
+        """Test log_requests re-raises the original exception."""
+
+        class CustomError(Exception):
+            pass
+
+        async def handler(ctx, data):
+            raise CustomError("custom error")
+
+        mw = log_requests(log_capture)
+        wrapped = mw(handler)
+
+        with pytest.raises(CustomError, match="custom error"):
+            await wrapped(ctx, b"input")
+
+        log_data = json.loads(log_records[0].getMessage())
+        assert "CustomError" in log_data["error"]

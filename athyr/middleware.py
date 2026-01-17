@@ -26,6 +26,9 @@ Example:
 
 from __future__ import annotations
 
+import json
+import logging
+import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from functools import wraps
@@ -33,6 +36,9 @@ from typing import TYPE_CHECKING, Any, Protocol, TypeVar, overload
 
 if TYPE_CHECKING:
     from athyr.client import AthyrAgent
+
+# Default logger for built-in middlewares
+_logger = logging.getLogger("athyr.middleware")
 
 
 @dataclass
@@ -225,3 +231,74 @@ async def passthrough_handler(ctx: MiddlewareContext, data: bytes) -> bytes:
         The input data unchanged.
     """
     return data
+
+
+# =============================================================================
+# Built-in Middlewares
+# =============================================================================
+
+
+def log_requests(logger: logging.Logger | None = None) -> Middleware:
+    """Create middleware that logs requests and responses in structured JSON format.
+
+    Logs each request with:
+    - subject: The message subject/topic
+    - duration_ms: Request duration in milliseconds
+    - response_bytes: Size of response (on success)
+    - error: Error message (on failure)
+
+    Args:
+        logger: Logger to use. Defaults to 'athyr.middleware' logger.
+
+    Returns:
+        A Middleware that logs all requests.
+
+    Example:
+        import logging
+
+        # Use default logger
+        app_middleware = log_requests()
+
+        # Or use custom logger
+        my_logger = logging.getLogger("myapp")
+        app_middleware = log_requests(my_logger)
+
+        # Apply to handler
+        handler = chain(app_middleware)(my_handler)
+    """
+    log = logger or _logger
+
+    def middleware_factory(next_handler: Handler) -> Handler:
+        async def logging_handler(ctx: MiddlewareContext, data: bytes) -> bytes:
+            start = time.perf_counter()
+            try:
+                result = await next_handler(ctx, data)
+                duration_ms = (time.perf_counter() - start) * 1000
+
+                log.info(
+                    json.dumps(
+                        {
+                            "subject": ctx.subject,
+                            "duration_ms": round(duration_ms, 3),
+                            "response_bytes": len(result),
+                        }
+                    )
+                )
+                return result
+
+            except Exception as e:
+                duration_ms = (time.perf_counter() - start) * 1000
+                log.error(
+                    json.dumps(
+                        {
+                            "subject": ctx.subject,
+                            "duration_ms": round(duration_ms, 3),
+                            "error": f"{type(e).__name__}: {e}",
+                        }
+                    )
+                )
+                raise
+
+        return logging_handler
+
+    return middleware_factory
