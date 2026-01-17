@@ -64,6 +64,24 @@ class Agent(Protocol):
         """Send request and wait for response (RPC pattern)."""
         ...
 
+    # LLM Operations
+
+    async def complete(self, request: CompletionRequest) -> CompletionResponse:
+        """Perform a blocking LLM completion."""
+        ...
+
+    async def complete_stream(
+        self, request: CompletionRequest
+    ) -> AsyncIterator[StreamChunk]:
+        """Perform a streaming LLM completion."""
+        ...
+
+    async def models(self) -> list[Model]:
+        """Get available LLM models."""
+        ...
+
+    # Memory Operations
+
     async def create_session(
         self,
         profile: SessionProfile | None = None,
