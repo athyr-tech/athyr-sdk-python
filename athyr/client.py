@@ -297,6 +297,10 @@ class AthyrAgent:
         if self._state_machine.state == ConnectionState.RECONNECTING:
             return
 
+        # Mark all subscriptions as reconnecting
+        for sub in self._subscriptions:
+            sub._set_reconnecting()
+
         # Set state to reconnecting (sync since we're likely in async context already)
         self._state_machine.set_state_sync(ConnectionState.RECONNECTING, error)
 
@@ -389,6 +393,10 @@ class AthyrAgent:
         )
 
         self._agent_id = response.agent_id
+
+        # Re-subscribe to all tracked subscriptions
+        await self._resubscribe_all()
+
         await self._state_machine.set_state(ConnectionState.CONNECTED)
 
         # Clear reconnect task reference
@@ -397,6 +405,55 @@ class AthyrAgent:
         # Start new heartbeat loop
         if self._heartbeat_interval > 0:
             self._heartbeat_task = asyncio.create_task(self._heartbeat_loop())
+
+    async def _resubscribe_all(self) -> None:
+        """Re-subscribe to all tracked subscriptions after reconnection.
+
+        This method creates new gRPC streams for each active subscription
+        and updates the Subscription objects to use the new streams.
+        Failed subscriptions are logged but don't prevent other subscriptions
+        from being restored.
+        """
+        if not self._subscriptions:
+            return
+
+        failed_subs: list[Subscription] = []
+
+        for sub in list(self._subscriptions):
+            if not sub.active:
+                # Clean up inactive subscriptions
+                self._subscriptions.discard(sub)
+                continue
+
+            try:
+                # Create new stream for this subscription
+                stream = self._stub.Subscribe(
+                    athyr_pb2.SubscribeRequest(
+                        agent_id=self._agent_id,
+                        subject=sub.subject,
+                        queue_group=sub.queue,
+                    )
+                )
+
+                # Update the subscription with the new stream
+                sub._set_stream(stream, stream.cancel)
+                logger.debug(f"Restored subscription: {sub.subject}")
+
+            except Exception as e:
+                logger.warning(f"Failed to restore subscription {sub.subject}: {e}")
+                failed_subs.append(sub)
+
+        # Remove failed subscriptions
+        for sub in failed_subs:
+            sub._active = False
+            sub._reconnecting = False
+            sub._reconnect_event.set()  # Wake up waiting iterator
+            self._subscriptions.discard(sub)
+
+        if failed_subs:
+            logger.warning(
+                f"Failed to restore {len(failed_subs)} subscription(s)"
+            )
 
     def connected(self) -> bool:
         """Check if connected to Athyr."""
@@ -623,6 +680,7 @@ class AthyrAgent:
 
             sub = Subscription(
                 subject=subject,
+                queue=queue,
                 stream=stream,
                 cancel_fn=stream.cancel,
             )

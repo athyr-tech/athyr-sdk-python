@@ -25,7 +25,7 @@ class TestSubscription:
         cancel_fn = MagicMock()
         stream = async_iter([])
 
-        sub = Subscription("test.subject", stream, cancel_fn)
+        sub = Subscription("test.subject", "", stream, cancel_fn)
 
         assert sub.subject == "test.subject"
         assert sub.active is True
@@ -40,7 +40,7 @@ class TestSubscription:
         cancel_fn = MagicMock()
         stream = async_iter(messages)
 
-        sub = Subscription("test", stream, cancel_fn)
+        sub = Subscription("test", "", stream, cancel_fn)
 
         received = []
         async for msg in sub.messages():
@@ -62,7 +62,7 @@ class TestSubscription:
         cancel_fn = MagicMock()
         stream = async_iter(messages)
 
-        sub = Subscription("test", stream, cancel_fn)
+        sub = Subscription("test", "", stream, cancel_fn)
         assert sub.active is True
 
         async for _ in sub.messages():
@@ -76,7 +76,7 @@ class TestSubscription:
         cancel_fn = MagicMock()
         stream = async_iter([])
 
-        sub = Subscription("test", stream, cancel_fn)
+        sub = Subscription("test", "", stream, cancel_fn)
         await sub.unsubscribe()
 
         cancel_fn.assert_called_once()
@@ -88,7 +88,7 @@ class TestSubscription:
         cancel_fn = MagicMock()
         stream = async_iter([])
 
-        sub = Subscription("test", stream, cancel_fn)
+        sub = Subscription("test", "", stream, cancel_fn)
         await sub.unsubscribe()
         await sub.unsubscribe()
         await sub.unsubscribe()
@@ -104,7 +104,7 @@ class TestSubscription:
             athyr_pb2.SubscribeMessage(subject="test", data=b"should not see", reply=""),
         ])
 
-        sub = Subscription("test", stream, cancel_fn)
+        sub = Subscription("test", "", stream, cancel_fn)
         await sub.unsubscribe()
 
         received = []
@@ -163,3 +163,131 @@ class TestAgentSubscriptionTracking:
         """Test subscriptions property returns a set."""
         agent = AthyrAgent("localhost:9090")
         assert isinstance(agent.subscriptions, set)
+
+
+class TestSubscriptionRecovery:
+    """Tests for subscription recovery after reconnection."""
+
+    def test_subscription_has_queue_property(self) -> None:
+        """Test subscription exposes queue property."""
+        cancel_fn = MagicMock()
+        stream = async_iter([])
+
+        sub = Subscription("test.subject", "my-queue", stream, cancel_fn)
+
+        assert sub.subject == "test.subject"
+        assert sub.queue == "my-queue"
+
+    def test_subscription_reconnecting_property(self) -> None:
+        """Test subscription has reconnecting property."""
+        cancel_fn = MagicMock()
+        stream = async_iter([])
+
+        sub = Subscription("test", "", stream, cancel_fn)
+
+        assert sub.reconnecting is False
+
+    def test_set_reconnecting_marks_subscription(self) -> None:
+        """Test _set_reconnecting marks subscription as reconnecting."""
+        cancel_fn = MagicMock()
+        stream = async_iter([])
+
+        sub = Subscription("test", "", stream, cancel_fn)
+        sub._set_reconnecting()
+
+        assert sub.reconnecting is True
+        assert sub.active is True  # Still active
+
+    def test_set_reconnecting_ignored_when_inactive(self) -> None:
+        """Test _set_reconnecting is ignored for inactive subscriptions."""
+        cancel_fn = MagicMock()
+        stream = async_iter([])
+
+        sub = Subscription("test", "", stream, cancel_fn)
+        sub._active = False
+        sub._set_reconnecting()
+
+        assert sub.reconnecting is False
+
+    @pytest.mark.asyncio
+    async def test_set_stream_updates_subscription(self) -> None:
+        """Test _set_stream updates stream and wakes up waiting iterator."""
+        cancel_fn = MagicMock()
+        new_cancel_fn = MagicMock()
+        old_stream = async_iter([])
+        new_stream = async_iter([
+            athyr_pb2.SubscribeMessage(subject="test", data=b"new", reply=""),
+        ])
+
+        sub = Subscription("test", "", old_stream, cancel_fn)
+        sub._set_reconnecting()
+
+        assert sub.reconnecting is True
+
+        sub._set_stream(new_stream, new_cancel_fn)
+
+        assert sub.reconnecting is False
+        assert sub._cancel_fn is new_cancel_fn
+
+    @pytest.mark.asyncio
+    async def test_messages_waits_for_reconnect(self) -> None:
+        """Test messages() waits for reconnect when stream ends during reconnection."""
+        cancel_fn = MagicMock()
+        new_cancel_fn = MagicMock()
+
+        # First stream ends after one message
+        old_stream = async_iter([
+            athyr_pb2.SubscribeMessage(subject="test", data=b"first", reply=""),
+        ])
+
+        # New stream with another message
+        new_stream = async_iter([
+            athyr_pb2.SubscribeMessage(subject="test", data=b"second", reply=""),
+        ])
+
+        sub = Subscription("test", "", old_stream, cancel_fn)
+
+        # Mark as reconnecting BEFORE starting iteration
+        # This simulates: messages arrive -> connection drops -> reconnecting
+        sub._set_reconnecting()
+
+        received = []
+
+        async def consume():
+            async for msg in sub.messages():
+                received.append(msg.data)
+
+        async def provide_new_stream():
+            # Wait a bit for consumer to start waiting for reconnect
+            await asyncio.sleep(0.05)
+            sub._set_stream(new_stream, new_cancel_fn)
+
+        # Run both concurrently
+        await asyncio.gather(consume(), provide_new_stream())
+
+        assert received == [b"first", b"second"]
+
+    @pytest.mark.asyncio
+    async def test_unsubscribe_stops_reconnect_waiting(self) -> None:
+        """Test unsubscribe() stops messages() waiting for reconnect."""
+        cancel_fn = MagicMock()
+        stream = async_iter([])
+
+        sub = Subscription("test", "", stream, cancel_fn)
+        sub._set_reconnecting()
+
+        async def consume():
+            async for _ in sub.messages():
+                pass
+
+        # Start consuming (will wait for reconnect)
+        task = asyncio.create_task(consume())
+        await asyncio.sleep(0.01)
+
+        # Unsubscribe should stop the waiting
+        await sub.unsubscribe()
+        await asyncio.sleep(0.01)
+
+        assert task.done()
+        assert sub.active is False
+        assert sub.reconnecting is False
