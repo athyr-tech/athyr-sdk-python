@@ -97,6 +97,33 @@ class TestSubscription:
         cancel_fn.assert_called_once()
 
     @pytest.mark.asyncio
+    async def test_unsubscribe_calls_on_unsubscribe_callback(self) -> None:
+        """Test unsubscribe() invokes the on_unsubscribe callback."""
+        cancel_fn = MagicMock()
+        on_unsubscribe = MagicMock()
+        stream = async_iter([])
+
+        sub = Subscription("test", "", stream, cancel_fn, on_unsubscribe=on_unsubscribe)
+        await sub.unsubscribe()
+
+        on_unsubscribe.assert_called_once_with(sub)
+
+    @pytest.mark.asyncio
+    async def test_on_unsubscribe_callback_only_called_once(self) -> None:
+        """Test on_unsubscribe callback is only called on first unsubscribe."""
+        cancel_fn = MagicMock()
+        on_unsubscribe = MagicMock()
+        stream = async_iter([])
+
+        sub = Subscription("test", "", stream, cancel_fn, on_unsubscribe=on_unsubscribe)
+        await sub.unsubscribe()
+        await sub.unsubscribe()
+        await sub.unsubscribe()
+
+        # Should only be called once (on first unsubscribe)
+        on_unsubscribe.assert_called_once()
+
+    @pytest.mark.asyncio
     async def test_messages_returns_empty_when_inactive(self) -> None:
         """Test messages() returns immediately when subscription is inactive."""
         cancel_fn = MagicMock()
@@ -163,6 +190,27 @@ class TestAgentSubscriptionTracking:
         """Test subscriptions property returns a set."""
         agent = AthyrAgent("localhost:9090")
         assert isinstance(agent.subscriptions, set)
+
+    @pytest.mark.asyncio
+    async def test_unsubscribe_removes_from_tracking_set(self) -> None:
+        """Test unsubscribe() removes subscription from tracking set via callback."""
+        # Simulate agent's subscription tracking
+        tracking_set: set[Subscription] = set()
+        cancel_fn = MagicMock()
+        stream = async_iter([])
+
+        sub = Subscription(
+            "test",
+            "",
+            stream,
+            cancel_fn,
+            on_unsubscribe=lambda s: tracking_set.discard(s),
+        )
+        tracking_set.add(sub)
+
+        assert len(tracking_set) == 1
+        await sub.unsubscribe()
+        assert len(tracking_set) == 0
 
 
 class TestSubscriptionRecovery:

@@ -683,6 +683,7 @@ class AthyrAgent:
                 queue=queue,
                 stream=stream,
                 cancel_fn=stream.cancel,
+                on_unsubscribe=lambda s: self._subscriptions.discard(s),
             )
 
             self._subscriptions.add(sub)

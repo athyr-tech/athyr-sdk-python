@@ -35,6 +35,7 @@ class Subscription:
         queue: str,
         stream: AsyncIterator[athyr_pb2.SubscribeMessage],
         cancel_fn: Callable[[], None],
+        on_unsubscribe: Callable[[Subscription], None] | None = None,
     ) -> None:
         """Initialize subscription.
 
@@ -43,11 +44,14 @@ class Subscription:
             queue: Queue group name (empty string for regular subscription).
             stream: The gRPC async stream of messages.
             cancel_fn: Function to call to cancel the subscription.
+            on_unsubscribe: Optional callback invoked when unsubscribe() is called.
+                Used by the agent to remove this subscription from tracking.
         """
         self._subject = subject
         self._queue = queue
         self._stream = stream
         self._cancel_fn = cancel_fn
+        self._on_unsubscribe = on_unsubscribe
         self._active = True
         self._reconnecting = False
         self._reconnect_event = asyncio.Event()
@@ -171,3 +175,10 @@ class Subscription:
             self._cancel_fn()
         except Exception:
             pass  # Ignore cancel errors (stream may already be closed)
+
+        # Notify agent to remove this subscription from tracking
+        if self._on_unsubscribe is not None:
+            try:
+                self._on_unsubscribe(self)
+            except Exception:
+                pass  # Don't let cleanup errors propagate
