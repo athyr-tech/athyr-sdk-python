@@ -26,6 +26,7 @@ from athyr.middleware import (
     chain,
     log_requests,
     middleware,
+    recover,
     retry,
     timeout,
 )
@@ -58,6 +59,7 @@ __all__ = [
     "chain",
     "log_requests",
     "middleware",
+    "recover",
     "retry",
     "timeout",
     # Tools

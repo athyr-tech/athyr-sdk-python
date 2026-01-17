@@ -31,6 +31,7 @@ import json
 import logging
 import random
 import time
+import traceback
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from functools import wraps
@@ -39,7 +40,7 @@ from typing import TYPE_CHECKING, Any, Protocol, TypeVar, overload
 if TYPE_CHECKING:
     from athyr.client import AthyrAgent
 
-from athyr.exceptions import TimeoutError as AthyrTimeoutError, UnavailableError
+from athyr.exceptions import InternalError, TimeoutError as AthyrTimeoutError, UnavailableError
 
 # Default logger for built-in middlewares
 _logger = logging.getLogger("athyr.middleware")
@@ -420,5 +421,70 @@ def retry(
             )
 
         return retry_handler
+
+    return middleware_factory
+
+
+def recover(logger: logging.Logger | None = None) -> Middleware:
+    """Create middleware that catches exceptions and converts them to InternalError.
+
+    This is the last line of defense - it catches any unhandled exceptions,
+    logs them with full traceback, and converts them to a clean InternalError.
+    This prevents raw exceptions from propagating to callers.
+
+    Note: AthyrError subclasses (TimeoutError, UnavailableError, etc.) are
+    NOT caught - they pass through unchanged since they're already proper errors.
+
+    Args:
+        logger: Logger to use. Defaults to 'athyr.middleware' logger.
+
+    Returns:
+        A Middleware that recovers from exceptions.
+
+    Example:
+        # Use default logger
+        mw = recover()
+
+        # Use custom logger
+        import logging
+        my_logger = logging.getLogger("myapp")
+        mw = recover(my_logger)
+
+        # Typical middleware chain order:
+        # recover (outermost) -> log -> retry -> timeout -> handler
+        combined = chain(recover(), log_requests(), retry(), timeout(10.0))
+    """
+    log = logger or _logger
+
+    def middleware_factory(next_handler: Handler) -> Handler:
+        async def recover_handler(ctx: MiddlewareContext, data: bytes) -> bytes:
+            try:
+                return await next_handler(ctx, data)
+            except InternalError:
+                # Already an InternalError, let it pass through
+                raise
+            except (AthyrTimeoutError, UnavailableError):
+                # Known Athyr errors, let them pass through
+                raise
+            except Exception as e:
+                # Log the full traceback
+                tb = traceback.format_exc()
+                log.error(
+                    json.dumps(
+                        {
+                            "subject": ctx.subject,
+                            "error": f"{type(e).__name__}: {e}",
+                            "traceback": tb,
+                        }
+                    )
+                )
+                # Convert to InternalError
+                raise InternalError(
+                    "Internal error",
+                    code="internal",
+                    details=f"subject={ctx.subject}",
+                )
+
+        return recover_handler
 
     return middleware_factory

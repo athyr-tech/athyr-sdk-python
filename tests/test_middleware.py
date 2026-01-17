@@ -14,10 +14,15 @@ from athyr.middleware import (
     log_requests,
     middleware,
     passthrough_handler,
+    recover,
     retry,
     timeout,
 )
-from athyr.exceptions import TimeoutError as AthyrTimeoutError, UnavailableError
+from athyr.exceptions import (
+    InternalError,
+    TimeoutError as AthyrTimeoutError,
+    UnavailableError,
+)
 
 
 @pytest.fixture
@@ -877,3 +882,176 @@ class TestRetry:
 
         assert result == b"PREFIX:data"
         assert attempts == 2
+
+
+class TestRecover:
+    """Tests for recover built-in middleware."""
+
+    @pytest.fixture
+    def log_capture(self) -> logging.Logger:
+        """Create a logger that captures log records."""
+        logger = logging.getLogger("test.recover")
+        logger.setLevel(logging.DEBUG)
+        logger.handlers.clear()
+        return logger
+
+    @pytest.fixture
+    def log_records(self, log_capture: logging.Logger) -> list[logging.LogRecord]:
+        """Capture log records from the test logger."""
+        records: list[logging.LogRecord] = []
+
+        class RecordHandler(logging.Handler):
+            def emit(self, record: logging.LogRecord) -> None:
+                records.append(record)
+
+        log_capture.addHandler(RecordHandler())
+        return records
+
+    @pytest.mark.asyncio
+    async def test_success_passes_through(self, ctx: MiddlewareContext) -> None:
+        """Test successful handler result passes through unchanged."""
+
+        async def handler(ctx, data):
+            return b"success"
+
+        mw = recover()
+        wrapped = mw(handler)
+        result = await wrapped(ctx, b"input")
+
+        assert result == b"success"
+
+    @pytest.mark.asyncio
+    async def test_converts_exception_to_internal_error(
+        self, ctx: MiddlewareContext, log_capture: logging.Logger, log_records: list
+    ) -> None:
+        """Test generic exceptions are converted to InternalError."""
+
+        async def failing_handler(ctx, data):
+            raise ValueError("something broke")
+
+        mw = recover(log_capture)
+        wrapped = mw(failing_handler)
+
+        with pytest.raises(InternalError) as exc_info:
+            await wrapped(ctx, b"input")
+
+        assert exc_info.value.code == "internal"
+        assert "test.subject" in exc_info.value.details
+
+    @pytest.mark.asyncio
+    async def test_logs_exception_with_traceback(
+        self, ctx: MiddlewareContext, log_capture: logging.Logger, log_records: list
+    ) -> None:
+        """Test exceptions are logged with full traceback."""
+
+        async def failing_handler(ctx, data):
+            raise RuntimeError("detailed error message")
+
+        mw = recover(log_capture)
+        wrapped = mw(failing_handler)
+
+        with pytest.raises(InternalError):
+            await wrapped(ctx, b"input")
+
+        assert len(log_records) == 1
+        assert log_records[0].levelno == logging.ERROR
+
+        log_data = json.loads(log_records[0].getMessage())
+        assert log_data["subject"] == "test.subject"
+        assert "RuntimeError: detailed error message" in log_data["error"]
+        assert "traceback" in log_data
+        assert "RuntimeError" in log_data["traceback"]
+
+    @pytest.mark.asyncio
+    async def test_passes_through_internal_error(
+        self, ctx: MiddlewareContext, log_capture: logging.Logger, log_records: list
+    ) -> None:
+        """Test InternalError passes through without conversion."""
+
+        async def handler(ctx, data):
+            raise InternalError("already internal", code="custom_code")
+
+        mw = recover(log_capture)
+        wrapped = mw(handler)
+
+        with pytest.raises(InternalError) as exc_info:
+            await wrapped(ctx, b"input")
+
+        # Should be the original error, not wrapped
+        assert exc_info.value.code == "custom_code"
+        assert "already internal" in str(exc_info.value)
+        # Should not log since it's already a proper error
+        assert len(log_records) == 0
+
+    @pytest.mark.asyncio
+    async def test_passes_through_timeout_error(
+        self, ctx: MiddlewareContext, log_capture: logging.Logger, log_records: list
+    ) -> None:
+        """Test TimeoutError passes through without conversion."""
+
+        async def handler(ctx, data):
+            raise AthyrTimeoutError("timed out", code="timeout")
+
+        mw = recover(log_capture)
+        wrapped = mw(handler)
+
+        with pytest.raises(AthyrTimeoutError) as exc_info:
+            await wrapped(ctx, b"input")
+
+        assert exc_info.value.code == "timeout"
+        assert len(log_records) == 0
+
+    @pytest.mark.asyncio
+    async def test_passes_through_unavailable_error(
+        self, ctx: MiddlewareContext, log_capture: logging.Logger, log_records: list
+    ) -> None:
+        """Test UnavailableError passes through without conversion."""
+
+        async def handler(ctx, data):
+            raise UnavailableError("service down", code="unavailable")
+
+        mw = recover(log_capture)
+        wrapped = mw(handler)
+
+        with pytest.raises(UnavailableError) as exc_info:
+            await wrapped(ctx, b"input")
+
+        assert exc_info.value.code == "unavailable"
+        assert len(log_records) == 0
+
+    @pytest.mark.asyncio
+    async def test_uses_default_logger(self, ctx: MiddlewareContext) -> None:
+        """Test recover uses default logger when none provided."""
+        # Just verify it doesn't raise
+        mw = recover()
+
+        async def handler(ctx, data):
+            return b"ok"
+
+        wrapped = mw(handler)
+        result = await wrapped(ctx, b"input")
+        assert result == b"ok"
+
+    @pytest.mark.asyncio
+    async def test_chains_as_outermost_middleware(
+        self, ctx: MiddlewareContext, log_capture: logging.Logger, log_records: list
+    ) -> None:
+        """Test recover works as outermost middleware in chain."""
+
+        @middleware
+        async def inner_middleware(ctx, data, call_next):
+            # This middleware itself throws
+            raise KeyError("middleware error")
+
+        async def handler(ctx, data):
+            return b"never reached"
+
+        combined = chain(recover(log_capture), inner_middleware)
+        wrapped = combined(handler)
+
+        with pytest.raises(InternalError):
+            await wrapped(ctx, b"input")
+
+        # Should have logged the KeyError
+        log_data = json.loads(log_records[0].getMessage())
+        assert "KeyError" in log_data["error"]
