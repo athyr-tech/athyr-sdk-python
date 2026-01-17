@@ -10,6 +10,17 @@ Patterns:
     - GroupChat: Multi-agent collaborative discussion
 """
 
+from athyr.orchestration.fanout import (
+    AgentResult,
+    AgentTrace,
+    FanOut,
+    FanOutError,
+    FanOutTrace,
+    all_must_succeed,
+    collect_all,
+    first_success,
+    require_quorum,
+)
 from athyr.orchestration.pipeline import (
     Pipeline,
     PipelineError,
@@ -23,4 +34,14 @@ __all__ = [
     "PipelineTrace",
     "StepTrace",
     "PipelineError",
+    # FanOut
+    "FanOut",
+    "FanOutTrace",
+    "FanOutError",
+    "AgentResult",
+    "AgentTrace",
+    "all_must_succeed",
+    "first_success",
+    "collect_all",
+    "require_quorum",
 ]
