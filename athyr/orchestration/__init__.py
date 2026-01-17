@@ -21,6 +21,13 @@ from athyr.orchestration.fanout import (
     first_success,
     require_quorum,
 )
+from athyr.orchestration.handoff import (
+    HandoffDecision,
+    HandoffError,
+    HandoffRouter,
+    HandoffStep,
+    HandoffTrace,
+)
 from athyr.orchestration.pipeline import (
     Pipeline,
     PipelineError,
@@ -44,4 +51,10 @@ __all__ = [
     "first_success",
     "collect_all",
     "require_quorum",
+    # HandoffRouter
+    "HandoffRouter",
+    "HandoffDecision",
+    "HandoffTrace",
+    "HandoffStep",
+    "HandoffError",
 ]
