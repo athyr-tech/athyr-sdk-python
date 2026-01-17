@@ -6,6 +6,7 @@ import pytest
 
 from athyr._grpc import athyr_pb2
 from athyr.client import AthyrAgent
+from athyr.client_state import ConnectionState
 from athyr.exceptions import ConnectionError, InvalidRequestError, UnavailableError
 from athyr.models import (
     CompletionConfig,
@@ -43,7 +44,7 @@ class TestCompleteWithMock:
         """Create an agent with mocked connection state."""
         agent = AthyrAgent("localhost:9090")
         # Simulate connected state
-        agent._connected = True
+        agent._state_machine.set_state_sync(ConnectionState.CONNECTED)
         agent._agent_id = "test-agent-123"
         agent._stub = MagicMock()
         return agent
@@ -266,7 +267,7 @@ class TestCompleteGrpcErrors:
     def mock_agent(self) -> AthyrAgent:
         """Create an agent with mocked connection state."""
         agent = AthyrAgent("localhost:9090")
-        agent._connected = True
+        agent._state_machine.set_state_sync(ConnectionState.CONNECTED)
         agent._agent_id = "test-agent-123"
         agent._stub = MagicMock()
         return agent
@@ -320,7 +321,7 @@ class TestModelsWithMock:
     def mock_agent(self) -> AthyrAgent:
         """Create an agent with mocked connection state."""
         agent = AthyrAgent("localhost:9090")
-        agent._connected = True
+        agent._state_machine.set_state_sync(ConnectionState.CONNECTED)
         agent._agent_id = "test-agent-123"
         agent._stub = MagicMock()
         return agent
@@ -412,7 +413,7 @@ class TestCompleteStreamWithMock:
     def mock_agent(self) -> AthyrAgent:
         """Create an agent with mocked connection state."""
         agent = AthyrAgent("localhost:9090")
-        agent._connected = True
+        agent._state_machine.set_state_sync(ConnectionState.CONNECTED)
         agent._agent_id = "test-agent-123"
         agent._stub = MagicMock()
         return agent

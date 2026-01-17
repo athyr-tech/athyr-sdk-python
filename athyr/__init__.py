@@ -3,6 +3,7 @@
 __version__ = "0.1.0"
 
 from athyr.client import Agent, AthyrAgent
+from athyr.client_state import ConnectionState, StateChangeCallback
 from athyr.exceptions import (
     AthyrError,
     AuthenticationError,
@@ -27,6 +28,9 @@ __all__ = [
     # Client
     "Agent",
     "AthyrAgent",
+    # Connection State
+    "ConnectionState",
+    "StateChangeCallback",
     # Models
     "AgentCard",
     "Message",

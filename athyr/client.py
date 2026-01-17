@@ -10,6 +10,7 @@ from typing import Protocol, runtime_checkable
 import grpc
 
 from athyr._grpc import athyr_pb2, athyr_pb2_grpc
+from athyr.client_state import ConnectionState, ConnectionStateMachine, StateChangeCallback
 from athyr.exceptions import ConnectionError, from_grpc_error
 from athyr.kv import Bucket
 from athyr.models import (
@@ -103,6 +104,7 @@ class AthyrAgent:
         tls: bool = False,
         connect_timeout: float = 10.0,
         heartbeat_interval: float = 30.0,
+        on_state_change: StateChangeCallback | None = None,
     ) -> None:
         """Initialize the agent.
 
@@ -112,6 +114,7 @@ class AthyrAgent:
             tls: Use TLS for connection.
             connect_timeout: Connection timeout in seconds.
             heartbeat_interval: Heartbeat interval in seconds (0 to disable).
+            on_state_change: Optional callback for connection state changes.
         """
         self._address = address
         self._agent_card = agent_card or AgentCard(name="python-agent")
@@ -122,14 +125,16 @@ class AthyrAgent:
         self._channel: grpc.aio.Channel | None = None
         self._stub: athyr_pb2_grpc.AthyrStub | None = None
         self._agent_id: str = ""
-        self._connected: bool = False
+        self._state_machine = ConnectionStateMachine(on_state_change=on_state_change)
         self._heartbeat_task: asyncio.Task[None] | None = None
         self._subscriptions: set[Subscription] = set()
 
     async def connect(self) -> None:
         """Connect to Athyr server and register the agent."""
-        if self._connected:
+        if self._state_machine.is_connected:
             return
+
+        await self._state_machine.set_state(ConnectionState.CONNECTING)
 
         try:
             # Create gRPC channel
@@ -154,7 +159,7 @@ class AthyrAgent:
             )
 
             self._agent_id = response.agent_id
-            self._connected = True
+            await self._state_machine.set_state(ConnectionState.CONNECTED)
 
             logger.info(f"Connected to Athyr as {self._agent_id}")
 
@@ -163,23 +168,23 @@ class AthyrAgent:
                 self._heartbeat_task = asyncio.create_task(self._heartbeat_loop())
 
         except asyncio.TimeoutError as e:
-            await self._cleanup()
+            await self._cleanup(error=e)
             raise ConnectionError(
                 f"Connection to {self._address} timed out",
                 code="TIMEOUT",
             ) from e
         except grpc.RpcError as e:
-            await self._cleanup()
+            await self._cleanup(error=e)
             raise from_grpc_error(e) from e
         except Exception as e:
-            await self._cleanup()
+            await self._cleanup(error=e)
             raise ConnectionError(
                 f"Failed to connect to {self._address}: {e}",
             ) from e
 
     async def close(self) -> None:
         """Close the connection and unregister the agent."""
-        if not self._connected:
+        if not self._state_machine.is_connected:
             return
 
         try:
@@ -209,9 +214,9 @@ class AthyrAgent:
         finally:
             await self._cleanup()
 
-    async def _cleanup(self) -> None:
+    async def _cleanup(self, error: Exception | None = None) -> None:
         """Clean up resources."""
-        self._connected = False
+        await self._state_machine.set_state(ConnectionState.DISCONNECTED, error)
         self._agent_id = ""
         self._stub = None
 
@@ -221,7 +226,7 @@ class AthyrAgent:
 
     async def _heartbeat_loop(self) -> None:
         """Background heartbeat loop."""
-        while self._connected:
+        while self._state_machine.is_connected:
             try:
                 await asyncio.sleep(self._heartbeat_interval)
                 if self._stub and self._agent_id:
@@ -236,11 +241,16 @@ class AthyrAgent:
 
     def connected(self) -> bool:
         """Check if connected to Athyr."""
-        return self._connected
+        return self._state_machine.is_connected
 
     def agent_id(self) -> str:
         """Get the assigned agent ID."""
         return self._agent_id
+
+    @property
+    def state(self) -> ConnectionState:
+        """Get the current connection state."""
+        return self._state_machine.state
 
     @property
     def subscriptions(self) -> set[Subscription]:
@@ -272,7 +282,7 @@ class AthyrAgent:
         Raises:
             ConnectionError: If not connected or stub unavailable.
         """
-        if not self._connected:
+        if not self._state_machine.is_connected:
             raise ConnectionError("Not connected to Athyr")
         if not self._stub:
             raise ConnectionError("No stub available")
