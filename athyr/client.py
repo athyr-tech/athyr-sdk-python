@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import random
 from collections.abc import AsyncIterator
 from typing import Protocol, runtime_checkable
 
@@ -105,6 +106,10 @@ class AthyrAgent:
         connect_timeout: float = 10.0,
         heartbeat_interval: float = 30.0,
         on_state_change: StateChangeCallback | None = None,
+        auto_reconnect: bool = False,
+        max_retries: int = 0,
+        base_backoff: float = 1.0,
+        max_backoff: float = 30.0,
     ) -> None:
         """Initialize the agent.
 
@@ -115,6 +120,10 @@ class AthyrAgent:
             connect_timeout: Connection timeout in seconds.
             heartbeat_interval: Heartbeat interval in seconds (0 to disable).
             on_state_change: Optional callback for connection state changes.
+            auto_reconnect: Enable automatic reconnection on connection loss.
+            max_retries: Maximum reconnection attempts (0 = infinite).
+            base_backoff: Initial backoff duration in seconds (default: 1.0).
+            max_backoff: Maximum backoff duration in seconds (default: 30.0).
         """
         self._address = address
         self._agent_card = agent_card or AgentCard(name="python-agent")
@@ -122,11 +131,18 @@ class AthyrAgent:
         self._connect_timeout = connect_timeout
         self._heartbeat_interval = heartbeat_interval
 
+        # Auto-reconnect configuration
+        self._auto_reconnect = auto_reconnect
+        self._max_retries = max_retries
+        self._base_backoff = base_backoff
+        self._max_backoff = max_backoff
+
         self._channel: grpc.aio.Channel | None = None
         self._stub: athyr_pb2_grpc.AthyrStub | None = None
         self._agent_id: str = ""
         self._state_machine = ConnectionStateMachine(on_state_change=on_state_change)
         self._heartbeat_task: asyncio.Task[None] | None = None
+        self._reconnect_task: asyncio.Task[None] | None = None
         self._subscriptions: set[Subscription] = set()
 
     async def connect(self) -> None:
@@ -184,7 +200,18 @@ class AthyrAgent:
 
     async def close(self) -> None:
         """Close the connection and unregister the agent."""
-        if not self._state_machine.is_connected:
+        # Cancel any in-progress reconnection
+        if self._reconnect_task:
+            self._reconnect_task.cancel()
+            try:
+                await self._reconnect_task
+            except asyncio.CancelledError:
+                pass
+            self._reconnect_task = None
+
+        # Check if we need to disconnect (connected or reconnecting)
+        if not self._state_machine.is_connected and \
+           self._state_machine.state != ConnectionState.RECONNECTING:
             return
 
         try:
@@ -238,6 +265,138 @@ class AthyrAgent:
                 break
             except Exception as e:
                 logger.warning(f"Heartbeat failed: {e}")
+                # Trigger reconnection if auto-reconnect is enabled
+                if self._auto_reconnect:
+                    self._trigger_reconnect(e)
+                    return  # Stop heartbeat loop, reconnection will start a new one
+
+    # Auto-reconnect methods
+
+    def _calculate_backoff(self, attempt: int) -> float:
+        """Calculate exponential backoff with jitter.
+
+        Args:
+            attempt: The current retry attempt (0-indexed).
+
+        Returns:
+            Backoff duration in seconds with jitter applied.
+        """
+        # Exponential: base * 2^attempt, capped at max
+        backoff = min(self._base_backoff * (2**attempt), self._max_backoff)
+        # Jitter: 0.5x to 1.5x
+        jitter = 0.5 + random.random()
+        return backoff * jitter
+
+    def _trigger_reconnect(self, error: Exception) -> None:
+        """Start the reconnection process if not already reconnecting.
+
+        Args:
+            error: The error that triggered reconnection.
+        """
+        # Check if already reconnecting
+        if self._state_machine.state == ConnectionState.RECONNECTING:
+            return
+
+        # Set state to reconnecting (sync since we're likely in async context already)
+        self._state_machine.set_state_sync(ConnectionState.RECONNECTING, error)
+
+        # Start reconnection loop
+        self._reconnect_task = asyncio.create_task(self._reconnect_loop(error))
+
+    async def _reconnect_loop(self, initial_error: Exception) -> None:
+        """Attempt to reconnect with exponential backoff.
+
+        Args:
+            initial_error: The error that triggered reconnection.
+        """
+        attempt = 0
+        last_error = initial_error
+
+        while True:
+            # Check max retries (0 = infinite)
+            if self._max_retries > 0 and attempt >= self._max_retries:
+                logger.error(
+                    f"Max reconnection attempts reached ({attempt}), "
+                    f"last error: {last_error}"
+                )
+                await self._state_machine.set_state(
+                    ConnectionState.DISCONNECTED, last_error
+                )
+                return
+
+            # Calculate backoff
+            backoff = self._calculate_backoff(attempt)
+            logger.info(
+                f"Reconnecting in {backoff:.2f}s (attempt {attempt + 1}"
+                + (f"/{self._max_retries})" if self._max_retries > 0 else ")")
+            )
+
+            try:
+                await asyncio.sleep(backoff)
+            except asyncio.CancelledError:
+                logger.info("Reconnection cancelled")
+                return
+
+            # Attempt reconnection
+            try:
+                await self._do_reconnect()
+                logger.info(f"Reconnected successfully after {attempt + 1} attempt(s)")
+                return
+            except asyncio.CancelledError:
+                logger.info("Reconnection cancelled")
+                return
+            except Exception as e:
+                last_error = e
+                attempt += 1
+                logger.warning(f"Reconnection attempt {attempt} failed: {e}")
+
+    async def _do_reconnect(self) -> None:
+        """Perform the actual reconnection.
+
+        Closes existing connection and establishes a new one.
+
+        Raises:
+            ConnectionError: If reconnection fails.
+        """
+        # Close existing channel
+        if self._channel:
+            try:
+                await self._channel.close()
+            except Exception:
+                pass
+            self._channel = None
+        self._stub = None
+
+        # Create new channel
+        if self._tls:
+            self._channel = grpc.aio.secure_channel(
+                self._address,
+                grpc.ssl_channel_credentials(),
+            )
+        else:
+            self._channel = grpc.aio.insecure_channel(self._address)
+
+        self._stub = athyr_pb2_grpc.AthyrStub(self._channel)
+
+        # Re-register agent
+        request = athyr_pb2.ConnectRequest(
+            agent_card=self._agent_card.to_proto(),
+        )
+
+        response = await asyncio.wait_for(
+            self._stub.Connect(request),
+            timeout=self._connect_timeout,
+        )
+
+        self._agent_id = response.agent_id
+        await self._state_machine.set_state(ConnectionState.CONNECTED)
+
+        # Clear reconnect task reference
+        self._reconnect_task = None
+
+        # Start new heartbeat loop
+        if self._heartbeat_interval > 0:
+            self._heartbeat_task = asyncio.create_task(self._heartbeat_loop())
 
     def connected(self) -> bool:
         """Check if connected to Athyr."""
