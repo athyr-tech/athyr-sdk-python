@@ -195,8 +195,8 @@ class TestAgentConnectionState:
 
         agent = AthyrAgent("localhost:9090", on_state_change=on_change)
 
-        # Manually trigger state change for testing
-        agent._state_machine.set_state_sync(ConnectionState.CONNECTING)
-        agent._state_machine.set_state_sync(ConnectionState.CONNECTED)
+        # Manually trigger state change for testing (access via _connection)
+        agent._connection._state_machine.set_state_sync(ConnectionState.CONNECTING)
+        agent._connection._state_machine.set_state_sync(ConnectionState.CONNECTED)
 
         assert states == [ConnectionState.CONNECTING, ConnectionState.CONNECTED]

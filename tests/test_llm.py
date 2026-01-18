@@ -44,9 +44,9 @@ class TestCompleteWithMock:
         """Create an agent with mocked connection state."""
         agent = AthyrAgent("localhost:9090")
         # Simulate connected state
-        agent._state_machine.set_state_sync(ConnectionState.CONNECTED)
-        agent._agent_id = "test-agent-123"
-        agent._stub = MagicMock()
+        agent._connection._state_machine.set_state_sync(ConnectionState.CONNECTED)
+        agent._connection._agent_id = "test-agent-123"
+        agent._connection._stub = MagicMock()
         return agent
 
     @pytest.mark.asyncio
@@ -65,7 +65,7 @@ class TestCompleteWithMock:
                 total_tokens=30,
             ),
         )
-        mock_agent._stub.Complete = AsyncMock(return_value=mock_response)
+        mock_agent._connection._stub.Complete = AsyncMock(return_value=mock_response)
 
         # Execute
         request = CompletionRequest(
@@ -96,7 +96,7 @@ class TestCompleteWithMock:
             latency_ms=100,
             usage=athyr_pb2.TokenUsage(),
         )
-        mock_agent._stub.Complete = AsyncMock(return_value=mock_response)
+        mock_agent._connection._stub.Complete = AsyncMock(return_value=mock_response)
 
         request = CompletionRequest(
             model="llama3",
@@ -111,7 +111,7 @@ class TestCompleteWithMock:
         await mock_agent.complete(request)
 
         # Verify the proto request was built correctly
-        call_args = mock_agent._stub.Complete.call_args
+        call_args = mock_agent._connection._stub.Complete.call_args
         proto_request = call_args[0][0]
         assert proto_request.config.temperature == 0.5
         assert proto_request.config.max_tokens == 100
@@ -145,7 +145,7 @@ class TestCompleteWithMock:
                 ),
             ],
         )
-        mock_agent._stub.Complete = AsyncMock(return_value=mock_response)
+        mock_agent._connection._stub.Complete = AsyncMock(return_value=mock_response)
 
         request = CompletionRequest(
             model="llama3",
@@ -179,7 +179,7 @@ class TestCompleteWithMock:
             latency_ms=100,
             usage=athyr_pb2.TokenUsage(),
         )
-        mock_agent._stub.Complete = AsyncMock(return_value=mock_response)
+        mock_agent._connection._stub.Complete = AsyncMock(return_value=mock_response)
 
         request = CompletionRequest(
             model="llama3",
@@ -187,7 +187,7 @@ class TestCompleteWithMock:
         )
         await mock_agent.complete(request)
 
-        call_args = mock_agent._stub.Complete.call_args
+        call_args = mock_agent._connection._stub.Complete.call_args
         proto_request = call_args[0][0]
         assert proto_request.agent_id == "test-agent-123"
 
@@ -202,7 +202,7 @@ class TestCompleteWithMock:
             latency_ms=100,
             usage=athyr_pb2.TokenUsage(),
         )
-        mock_agent._stub.Complete = AsyncMock(return_value=mock_response)
+        mock_agent._connection._stub.Complete = AsyncMock(return_value=mock_response)
 
         request = CompletionRequest(
             model="llama3",
@@ -212,7 +212,7 @@ class TestCompleteWithMock:
         )
         await mock_agent.complete(request)
 
-        call_args = mock_agent._stub.Complete.call_args
+        call_args = mock_agent._connection._stub.Complete.call_args
         proto_request = call_args[0][0]
         assert proto_request.session_id == "session-abc"
         assert proto_request.include_memory is True
@@ -228,7 +228,7 @@ class TestCompleteWithMock:
             latency_ms=100,
             usage=athyr_pb2.TokenUsage(),
         )
-        mock_agent._stub.Complete = AsyncMock(return_value=mock_response)
+        mock_agent._connection._stub.Complete = AsyncMock(return_value=mock_response)
 
         request = CompletionRequest(
             model="llama3",
@@ -237,7 +237,7 @@ class TestCompleteWithMock:
         )
         await mock_agent.complete(request)
 
-        call_args = mock_agent._stub.Complete.call_args
+        call_args = mock_agent._connection._stub.Complete.call_args
         proto_request = call_args[0][0]
         assert proto_request.tool_choice == "required"
 
@@ -267,16 +267,16 @@ class TestCompleteGrpcErrors:
     def mock_agent(self) -> AthyrAgent:
         """Create an agent with mocked connection state."""
         agent = AthyrAgent("localhost:9090")
-        agent._state_machine.set_state_sync(ConnectionState.CONNECTED)
-        agent._agent_id = "test-agent-123"
-        agent._stub = MagicMock()
+        agent._connection._state_machine.set_state_sync(ConnectionState.CONNECTED)
+        agent._connection._agent_id = "test-agent-123"
+        agent._connection._stub = MagicMock()
         return agent
 
     @pytest.mark.asyncio
     async def test_complete_wraps_grpc_unavailable(self, mock_agent: AthyrAgent) -> None:
         """Test complete() wraps gRPC UNAVAILABLE error."""
         mock_error = MockGrpcError(grpc.StatusCode.UNAVAILABLE, "Service unavailable")
-        mock_agent._stub.Complete = AsyncMock(side_effect=mock_error)
+        mock_agent._connection._stub.Complete = AsyncMock(side_effect=mock_error)
 
         request = CompletionRequest(
             model="llama3",
@@ -292,7 +292,7 @@ class TestCompleteGrpcErrors:
     ) -> None:
         """Test complete() wraps gRPC INVALID_ARGUMENT error."""
         mock_error = MockGrpcError(grpc.StatusCode.INVALID_ARGUMENT, "Invalid model")
-        mock_agent._stub.Complete = AsyncMock(side_effect=mock_error)
+        mock_agent._connection._stub.Complete = AsyncMock(side_effect=mock_error)
 
         request = CompletionRequest(
             model="invalid-model",
@@ -321,9 +321,9 @@ class TestModelsWithMock:
     def mock_agent(self) -> AthyrAgent:
         """Create an agent with mocked connection state."""
         agent = AthyrAgent("localhost:9090")
-        agent._state_machine.set_state_sync(ConnectionState.CONNECTED)
-        agent._agent_id = "test-agent-123"
-        agent._stub = MagicMock()
+        agent._connection._state_machine.set_state_sync(ConnectionState.CONNECTED)
+        agent._connection._agent_id = "test-agent-123"
+        agent._connection._stub = MagicMock()
         return agent
 
     @pytest.mark.asyncio
@@ -351,7 +351,7 @@ class TestModelsWithMock:
                 ),
             ]
         )
-        mock_agent._stub.ListModels = AsyncMock(return_value=mock_response)
+        mock_agent._connection._stub.ListModels = AsyncMock(return_value=mock_response)
 
         models = await mock_agent.models()
 
@@ -367,7 +367,7 @@ class TestModelsWithMock:
     async def test_models_returns_empty_list(self, mock_agent: AthyrAgent) -> None:
         """Test models() returns empty list when no models available."""
         mock_response = athyr_pb2.ListModelsResponse(models=[])
-        mock_agent._stub.ListModels = AsyncMock(return_value=mock_response)
+        mock_agent._connection._stub.ListModels = AsyncMock(return_value=mock_response)
 
         models = await mock_agent.models()
 
@@ -377,7 +377,7 @@ class TestModelsWithMock:
     async def test_models_wraps_grpc_error(self, mock_agent: AthyrAgent) -> None:
         """Test models() wraps gRPC errors."""
         mock_error = MockGrpcError(grpc.StatusCode.UNAVAILABLE, "Service down")
-        mock_agent._stub.ListModels = AsyncMock(side_effect=mock_error)
+        mock_agent._connection._stub.ListModels = AsyncMock(side_effect=mock_error)
 
         with pytest.raises(UnavailableError):
             await mock_agent.models()
@@ -413,9 +413,9 @@ class TestCompleteStreamWithMock:
     def mock_agent(self) -> AthyrAgent:
         """Create an agent with mocked connection state."""
         agent = AthyrAgent("localhost:9090")
-        agent._state_machine.set_state_sync(ConnectionState.CONNECTED)
-        agent._agent_id = "test-agent-123"
-        agent._stub = MagicMock()
+        agent._connection._state_machine.set_state_sync(ConnectionState.CONNECTED)
+        agent._connection._agent_id = "test-agent-123"
+        agent._connection._stub = MagicMock()
         return agent
 
     @pytest.mark.asyncio
@@ -441,7 +441,7 @@ class TestCompleteStreamWithMock:
         # Mock the streaming call
         mock_stream = MagicMock()
         mock_stream.__aiter__ = lambda self: async_iter(chunks)
-        mock_agent._stub.CompleteStream = MagicMock(return_value=mock_stream)
+        mock_agent._connection._stub.CompleteStream = MagicMock(return_value=mock_stream)
 
         request = CompletionRequest(
             model="llama3",
@@ -475,7 +475,7 @@ class TestCompleteStreamWithMock:
 
         mock_stream = MagicMock()
         mock_stream.__aiter__ = lambda self: async_iter(chunks)
-        mock_agent._stub.CompleteStream = MagicMock(return_value=mock_stream)
+        mock_agent._connection._stub.CompleteStream = MagicMock(return_value=mock_stream)
 
         request = CompletionRequest(
             model="llama3",
@@ -510,7 +510,7 @@ class TestCompleteStreamWithMock:
 
         mock_stream = MagicMock()
         mock_stream.__aiter__ = lambda self: async_iter(chunks)
-        mock_agent._stub.CompleteStream = MagicMock(return_value=mock_stream)
+        mock_agent._connection._stub.CompleteStream = MagicMock(return_value=mock_stream)
 
         request = CompletionRequest(
             model="llama3",
@@ -534,7 +534,7 @@ class TestCompleteStreamWithMock:
 
         mock_stream = MagicMock()
         mock_stream.__aiter__ = lambda self: async_iter(chunks)
-        mock_agent._stub.CompleteStream = MagicMock(return_value=mock_stream)
+        mock_agent._connection._stub.CompleteStream = MagicMock(return_value=mock_stream)
 
         request = CompletionRequest(
             model="llama3",
@@ -544,6 +544,6 @@ class TestCompleteStreamWithMock:
         async for _ in mock_agent.complete_stream(request):
             pass
 
-        call_args = mock_agent._stub.CompleteStream.call_args
+        call_args = mock_agent._connection._stub.CompleteStream.call_args
         proto_request = call_args[0][0]
         assert proto_request.agent_id == "test-agent-123"
