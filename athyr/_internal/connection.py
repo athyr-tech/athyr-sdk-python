@@ -127,6 +127,26 @@ class ConnectionManager:
             raise ConnectionError("No stub available")
         return self._stub
 
+    async def _establish_connection(self) -> str:
+        """Create channel, stub, and register agent.
+
+        Returns:
+            The assigned agent ID.
+        """
+        self._channel = self._create_channel()
+        self._stub = athyr_pb2_grpc.AthyrStub(self._channel)
+
+        request = athyr_pb2.ConnectRequest(
+            agent_card=self._agent_card.to_proto(),
+        )
+
+        response = await asyncio.wait_for(
+            self._stub.Connect(request),
+            timeout=self._connect_timeout,
+        )
+
+        return response.agent_id
+
     # Connection lifecycle
 
     async def connect(self) -> None:
@@ -137,20 +157,7 @@ class ConnectionManager:
         await self._state_machine.set_state(ConnectionState.CONNECTING)
 
         try:
-            self._channel = self._create_channel()
-            self._stub = athyr_pb2_grpc.AthyrStub(self._channel)
-
-            # Connect and register
-            request = athyr_pb2.ConnectRequest(
-                agent_card=self._agent_card.to_proto(),
-            )
-
-            response = await asyncio.wait_for(
-                self._stub.Connect(request),
-                timeout=self._connect_timeout,
-            )
-
-            self._agent_id = response.agent_id
+            self._agent_id = await self._establish_connection()
             await self._state_machine.set_state(ConnectionState.CONNECTED)
 
             logger.info(f"Connected to Athyr as {self._agent_id}")
@@ -329,21 +336,8 @@ class ConnectionManager:
             self._channel = None
         self._stub = None
 
-        # Create new channel
-        self._channel = self._create_channel()
-        self._stub = athyr_pb2_grpc.AthyrStub(self._channel)
-
-        # Re-register agent
-        request = athyr_pb2.ConnectRequest(
-            agent_card=self._agent_card.to_proto(),
-        )
-
-        response = await asyncio.wait_for(
-            self._stub.Connect(request),
-            timeout=self._connect_timeout,
-        )
-
-        self._agent_id = response.agent_id
+        # Establish new connection
+        self._agent_id = await self._establish_connection()
 
         # Re-subscribe all tracked subscriptions
         await self._resubscribe_all()
@@ -375,7 +369,7 @@ class ConnectionManager:
                         queue_group=sub.queue,
                     )
                 )
-                sub._set_stream(stream, stream.cancel)
+                sub._set_stream(stream, lambda: stream.cancel())
                 logger.debug(f"Restored subscription: {sub.subject}")
 
             except Exception as e:

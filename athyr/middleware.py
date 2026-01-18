@@ -35,7 +35,7 @@ import traceback
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from functools import wraps
-from typing import TYPE_CHECKING, Any, Protocol, TypeVar, overload
+from typing import TYPE_CHECKING, Any, Protocol
 
 if TYPE_CHECKING:
     from athyr.client import AthyrAgent

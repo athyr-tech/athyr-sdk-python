@@ -150,8 +150,9 @@ def from_grpc_error(error: Exception) -> AthyrError:
     if code is None:
         return AthyrError(str(error))
 
+    # code is guaranteed to be StatusCode at this point
     exc_class = _GRPC_STATUS_MAP.get(code, AthyrError)
-    return exc_class(details, code=code.name if code else None)
+    return exc_class(details, code=code.name)
 
 
 # Helper functions for error checking

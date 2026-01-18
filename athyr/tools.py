@@ -7,7 +7,7 @@ import inspect
 import json
 from typing import TYPE_CHECKING, Any, Callable, TypeVar, get_type_hints
 
-from pydantic import BaseModel, Field, create_model
+from pydantic import Field, create_model
 from pydantic.fields import FieldInfo
 
 from athyr.exceptions import MaxIterationsError

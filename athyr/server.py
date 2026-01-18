@@ -31,6 +31,7 @@ from typing import TYPE_CHECKING, Any, Callable, TypeVar
 
 from athyr.client import AthyrAgent
 from athyr.models import AgentCard
+from athyr.protocol import Agent
 from athyr.service import (
     DefaultServiceContext,
     Middleware,
@@ -86,7 +87,7 @@ class Server:
     middleware: list[Middleware] = field(default_factory=list)
     """Global middleware applied to all services."""
 
-    _agent: AthyrAgent | None = field(default=None, repr=False)
+    _agent: Agent | None = field(default=None, repr=False)
     """Internal agent connection."""
 
     _subscriptions: list[Subscription] = field(default_factory=list, repr=False)
