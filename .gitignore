@@ -55,3 +55,4 @@ proto/
 # Note: Generated gRPC stubs ARE tracked (needed for SDK package)
 # To regenerate: ./scripts/generate_protos.sh
 /temp/
+.athyr-test/
