@@ -24,6 +24,8 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
+from athyr.orchestration import DEFAULT_TIMEOUT
+
 if TYPE_CHECKING:
     from athyr.client import Agent
 
@@ -338,7 +340,7 @@ class HandoffRouter:
 
             # Call the agent
             try:
-                output = await client.request(step.subject, current)
+                output = await client.request(step.subject, current, timeout=DEFAULT_TIMEOUT)
             except Exception as e:
                 step.duration = datetime.now() - step.started_at
                 step.error = e
@@ -401,7 +403,7 @@ class HandoffRouter:
 
                     try:
                         fallback_output = await client.request(
-                            self._fallback_subject, current
+                            self._fallback_subject, current, timeout=DEFAULT_TIMEOUT
                         )
                     except Exception as e:
                         fallback_step.duration = datetime.now() - fallback_step.started_at
@@ -454,7 +456,7 @@ class HandoffRouter:
 
             try:
                 specialist_output = await client.request(
-                    self._routes[decision.route], current
+                    self._routes[decision.route], current, timeout=DEFAULT_TIMEOUT
                 )
             except Exception as e:
                 specialist_step.duration = datetime.now() - specialist_step.started_at

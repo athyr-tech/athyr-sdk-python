@@ -141,16 +141,39 @@ agent = AthyrAgent(
 
 See the [examples/](examples/) directory:
 
-- `quickstart.py` - Basic usage
-- `streaming.py` - Streaming completions
-- `messaging.py` - Pub/sub and request/reply
-- `tool_calling.py` - Function tools
-- `chat_agent.py` - Memory sessions with tools
-- `resilient_agent.py` - Auto-reconnect
-- `pipeline.py` - Sequential orchestration
-- `fanout.py` - Parallel orchestration
-- `handoff.py` - Routing orchestration
-- `groupchat.py` - Multi-agent chat
+| Example | Description |
+|---------|-------------|
+| `quickstart.py` | Basic agent setup and completion |
+| `streaming.py` | Streaming completions |
+| `messaging.py` | Pub/sub and request/reply |
+| `tool_calling.py` | Function tools with LLM |
+| `chat_agent.py` | Memory sessions with tools |
+| `resilient_agent.py` | Auto-reconnect handling |
+| `pipeline.py` | Sequential orchestration |
+| `fanout.py` | Parallel orchestration |
+| `handoff.py` | Dynamic routing |
+| `groupchat.py` | Multi-agent discussion |
+
+### Running Examples
+
+```bash
+# Terminal 1: Start Athyr server
+athyr serve
+
+# Terminal 2: Run any example
+python examples/quickstart.py
+python examples/pipeline.py
+```
+
+For orchestration examples that need multiple agents:
+
+```bash
+# Terminal 2: Start agents
+python examples/agents.py pipeline --model smollm2:135m
+
+# Terminal 3: Run the orchestrator
+python examples/pipeline.py
+```
 
 ## Requirements
 

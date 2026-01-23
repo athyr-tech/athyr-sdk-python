@@ -25,6 +25,8 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any, Callable
 
+from athyr.orchestration import DEFAULT_TIMEOUT
+
 if TYPE_CHECKING:
     from athyr.client import Agent
 
@@ -501,7 +503,7 @@ class GroupChat:
 
             # Call participant
             try:
-                resp_bytes = await client.request(p.subject, req.to_json())
+                resp_bytes = await client.request(p.subject, req.to_json(), timeout=DEFAULT_TIMEOUT)
             except Exception as e:
                 trace.duration = datetime.now() - trace.started_at
                 trace.error = ChatError(

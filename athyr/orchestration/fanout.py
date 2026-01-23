@@ -22,6 +22,8 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Callable
 
+from athyr.orchestration import DEFAULT_TIMEOUT
+
 if TYPE_CHECKING:
     from athyr.client import Agent
 
@@ -387,13 +389,9 @@ class FanOut:
             result = AgentResult()
 
             try:
-                if agent.timeout is not None:
-                    output = await asyncio.wait_for(
-                        client.request(agent.subject, input),
-                        timeout=agent.timeout,
-                    )
-                else:
-                    output = await client.request(agent.subject, input)
+                # Pass timeout to request for gRPC-level timeout
+                timeout = agent.timeout if agent.timeout is not None else DEFAULT_TIMEOUT
+                output = await client.request(agent.subject, input, timeout=timeout)
 
                 agent_trace.output = output
                 result.output = output

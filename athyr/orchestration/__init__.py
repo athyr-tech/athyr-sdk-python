@@ -10,6 +10,10 @@ Patterns:
     - GroupChat: Multi-agent collaborative discussion
 """
 
+# Default timeout for agent requests (seconds)
+# LLM calls can be slow, so we use a generous default
+DEFAULT_TIMEOUT: float = 120.0
+
 from athyr.orchestration.fanout import (
     AgentResult,
     AgentTrace,
@@ -48,6 +52,8 @@ from athyr.orchestration.pipeline import (
 )
 
 __all__ = [
+    # Constants
+    "DEFAULT_TIMEOUT",
     # Pipeline
     "Pipeline",
     "PipelineTrace",

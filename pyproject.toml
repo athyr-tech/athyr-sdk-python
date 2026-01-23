@@ -27,6 +27,8 @@ keywords = ["athyr", "ai", "agents", "llm", "grpc"]
 
 dependencies = [
     "grpcio>=1.60.0",
+    "googleapis-common-protos>=1.60.0",
+    "protobuf>=4.25.0",
     "pydantic>=2.0.0",
 ]
 

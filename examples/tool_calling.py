@@ -26,10 +26,14 @@ Usage:
 import argparse
 import asyncio
 import json
+import os
 import random
 
 from athyr import AthyrAgent, AgentCard, Tool, get_tool, tool
 from athyr.models import CompletionRequest, Message, ToolCall
+
+# Server address (configurable via ATHYR_SERVER env var for Docker)
+ATHYR_SERVER = os.environ.get("ATHYR_SERVER", "localhost:9090")
 
 
 # Define tools using the @tool decorator
@@ -245,7 +249,7 @@ async def run_live_demo() -> None:
         capabilities=["tools", "function_calling"],
     )
 
-    async with AthyrAgent("localhost:9090", agent_card=card) as agent:
+    async with AthyrAgent(ATHYR_SERVER, agent_card=card) as agent:
         print(f"\nConnected as: {agent.agent_id()}")
 
         # Get available models

@@ -15,8 +15,12 @@ Usage:
 """
 
 import asyncio
+import os
 
 from athyr import AthyrAgent, AgentCard
+
+# Server address (configurable via ATHYR_SERVER env var for Docker)
+ATHYR_SERVER = os.environ.get("ATHYR_SERVER", "ATHYR_SERVER")
 
 
 async def demo_pubsub() -> None:
@@ -29,8 +33,8 @@ async def demo_pubsub() -> None:
     pub_card = AgentCard(name="publisher", description="Publishes events")
     sub_card = AgentCard(name="subscriber", description="Receives events")
 
-    async with AthyrAgent("localhost:9090", agent_card=sub_card) as subscriber:
-        async with AthyrAgent("localhost:9090", agent_card=pub_card) as publisher:
+    async with AthyrAgent(ATHYR_SERVER, agent_card=sub_card) as subscriber:
+        async with AthyrAgent(ATHYR_SERVER, agent_card=pub_card) as publisher:
             print(f"Publisher:  {publisher.agent_id()}")
             print(f"Subscriber: {subscriber.agent_id()}")
 
@@ -79,9 +83,9 @@ async def demo_queue_groups() -> None:
     worker2_card = AgentCard(name="worker-2")
     pub_card = AgentCard(name="task-publisher")
 
-    async with AthyrAgent("localhost:9090", agent_card=worker1_card) as worker1:
-        async with AthyrAgent("localhost:9090", agent_card=worker2_card) as worker2:
-            async with AthyrAgent("localhost:9090", agent_card=pub_card) as publisher:
+    async with AthyrAgent(ATHYR_SERVER, agent_card=worker1_card) as worker1:
+        async with AthyrAgent(ATHYR_SERVER, agent_card=worker2_card) as worker2:
+            async with AthyrAgent(ATHYR_SERVER, agent_card=pub_card) as publisher:
                 print(f"Worker 1:  {worker1.agent_id()}")
                 print(f"Worker 2:  {worker2.agent_id()}")
                 print(f"Publisher: {publisher.agent_id()}")
@@ -139,8 +143,8 @@ async def demo_request_reply() -> None:
     service_card = AgentCard(name="calculator-service")
     client_card = AgentCard(name="calculator-client")
 
-    async with AthyrAgent("localhost:9090", agent_card=service_card) as service:
-        async with AthyrAgent("localhost:9090", agent_card=client_card) as client:
+    async with AthyrAgent(ATHYR_SERVER, agent_card=service_card) as service:
+        async with AthyrAgent(ATHYR_SERVER, agent_card=client_card) as client:
             print(f"Service: {service.agent_id()}")
             print(f"Client:  {client.agent_id()}")
 

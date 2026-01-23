@@ -15,10 +15,14 @@ Usage:
 """
 
 import asyncio
+import os
 import sys
 
 from athyr import AthyrAgent, AgentCard
 from athyr.models import CompletionRequest, Message
+
+# Server address (configurable via ATHYR_SERVER env var for Docker)
+ATHYR_SERVER = os.environ.get("ATHYR_SERVER", "localhost:9090")
 
 
 async def main() -> None:
@@ -32,7 +36,7 @@ async def main() -> None:
         version="1.0.0",
     )
 
-    async with AthyrAgent("localhost:9090", agent_card=card) as agent:
+    async with AthyrAgent(ATHYR_SERVER, agent_card=card) as agent:
         print(f"Connected! Agent ID: {agent.agent_id()}")
 
         # Get available models

@@ -1,40 +1,59 @@
 #!/usr/bin/env python
 """HandoffRouter example - route requests to specialists.
 
-A triage agent decides which specialist should handle the request.
+A triage agent classifies requests and routes to appropriate specialists.
 Use for: support systems, task routing, expert delegation.
+
+Usage:
+    python examples/handoff.py
 """
 
 import asyncio
+import os
 
+from athyr import AthyrAgent, AgentCard
 from athyr.orchestration import HandoffRouter
+
+# Server address (configurable via ATHYR_SERVER env var for Docker)
+ATHYR_SERVER = os.environ.get("ATHYR_SERVER", "localhost:9090")
 
 
 async def main() -> None:
-    # Define router with triage and specialist routes
+    """Run the HandoffRouter example."""
+    # Define router with triage and specialists (4 agents to fit within free tier limit)
+    # Triage returns JSON: {"route": "billing"} or {"handled": true, "response": "..."}
     router = (
         HandoffRouter("support-router")
-        .triage("agents.triage")  # Decides where to route
-        .route("billing", "agents.billing-specialist")
-        .route("technical", "agents.tech-specialist")
-        .route("sales", "agents.sales-specialist")
-        .fallback("agents.general-support")  # When route unknown
-        .max_handoffs(3)  # Prevent infinite loops
+        .triage("agent.triage.invoke")
+        .route("billing", "agent.billing.invoke")
+        .route("technical", "agent.technical.invoke")
+        .fallback("agent.general.invoke")
+        .max_handoffs(3)
     )
 
-    # Triage agent should return JSON: {"route": "billing", "context": "..."}
-    # Or handle directly: {"handled": true, "response": "..."}
+    card = AgentCard(name="handoff-demo", description="HandoffRouter demo")
 
-    # Execute (requires running Athyr server with these agents)
-    # async with AthyrAgent("localhost:9090") as agent:
-    #     response = await router.handle(agent, b"I have a billing question")
+    async with AthyrAgent(ATHYR_SERVER, agent_card=card) as agent:
+        print(f"Connected: {agent.agent_id()}")
+        print(f"Routes: {list(router._routes.keys())}")
 
-    # With tracing:
-    # trace = await router.handle_with_trace(agent, request)
-    # print(f"Route path: {trace.route_names}")
+        # Route a request
+        request = b'{"message": "I was charged twice for my subscription"}'
+        print(f"\nRequest: {request.decode()}")
 
-    print("HandoffRouter defined with triage and 3 specialists")
-    print(f"Routes: {list(router._routes.keys())}")
+        trace = await router.handle_with_trace(agent, request)
+
+        if trace.error:
+            print(f"Routing failed: {trace.error}")
+            return
+
+        # Show routing path
+        print(f"\nRoute path: {' -> '.join(trace.route_names())}")
+        for step in trace.path:
+            ms = step.duration.total_seconds() * 1000
+            print(f"  {step.agent}: {ms:.0f}ms (-> {step.route or 'final'})")
+
+        print(f"\nResponse: {trace.output.decode()[:80]}...")
 
 
 if __name__ == "__main__":

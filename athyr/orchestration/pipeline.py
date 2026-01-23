@@ -21,6 +21,8 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Callable
 
+from athyr.orchestration import DEFAULT_TIMEOUT
+
 if TYPE_CHECKING:
     from athyr.client import Agent
 
@@ -264,14 +266,9 @@ class Pipeline:
             )
 
             try:
-                # Execute with optional timeout
-                if step.options.timeout is not None:
-                    output = await asyncio.wait_for(
-                        agent.request(step.subject, current),
-                        timeout=step.options.timeout,
-                    )
-                else:
-                    output = await agent.request(step.subject, current)
+                # Execute with optional timeout (pass to request for gRPC-level timeout)
+                timeout = step.options.timeout if step.options.timeout is not None else DEFAULT_TIMEOUT
+                output = await agent.request(step.subject, current, timeout=timeout)
 
                 step_trace.duration = datetime.now() - step_trace.started_at
 
