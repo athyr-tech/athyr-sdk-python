@@ -16,8 +16,8 @@ Usage:
     # Start Athyr server first
     athyr serve
 
-    # Run the example
-    python examples/tool_calling.py
+    # Run the example (ATHYR_MODEL is required)
+    ATHYR_MODEL=gpt-4 python examples/tool_calling.py
 
     # Run with mock mode to demonstrate the tool calling flow
     python examples/tool_calling.py --mock
@@ -32,8 +32,9 @@ import random
 from athyr import AthyrAgent, AgentCard, Tool, get_tool, tool
 from athyr.models import CompletionRequest, Message, ToolCall
 
-# Server address (configurable via ATHYR_SERVER env var for Docker)
+# Configuration via environment variables
 ATHYR_SERVER = os.environ.get("ATHYR_SERVER", "localhost:9090")
+ATHYR_MODEL = os.environ.get("ATHYR_MODEL")  # Required: model to use
 
 
 # Define tools using the @tool decorator
@@ -252,15 +253,13 @@ async def run_live_demo() -> None:
     async with AthyrAgent(ATHYR_SERVER, agent_card=card) as agent:
         print(f"\nConnected as: {agent.agent_id()}")
 
-        # Get available models
-        models = await agent.models()
-        available = [m for m in models if m.available]
-
-        if not available:
-            print("No available models")
+        # Check model is specified
+        if not ATHYR_MODEL:
+            print("\nError: ATHYR_MODEL environment variable is required")
+            print("Example: ATHYR_MODEL=gpt-4 python examples/tool_calling.py")
             return
 
-        model_id = available[0].id
+        model_id = ATHYR_MODEL
         print(f"Using model: {model_id}")
 
         # Convert decorated functions to Tool objects for the API

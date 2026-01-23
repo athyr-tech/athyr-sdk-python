@@ -10,8 +10,8 @@ Usage:
     # Start Athyr server first
     athyr serve
 
-    # Run the example
-    python examples/streaming.py
+    # Run the example (ATHYR_MODEL is required)
+    ATHYR_MODEL=llama2 python examples/streaming.py
 """
 
 import asyncio
@@ -21,8 +21,9 @@ import sys
 from athyr import AthyrAgent, AgentCard
 from athyr.models import CompletionRequest, Message
 
-# Server address (configurable via ATHYR_SERVER env var for Docker)
+# Configuration via environment variables
 ATHYR_SERVER = os.environ.get("ATHYR_SERVER", "localhost:9090")
+ATHYR_MODEL = os.environ.get("ATHYR_MODEL")  # Required: model to use
 
 
 async def main() -> None:
@@ -39,14 +40,13 @@ async def main() -> None:
     async with AthyrAgent(ATHYR_SERVER, agent_card=card) as agent:
         print(f"Connected! Agent ID: {agent.agent_id()}")
 
-        # Get available models
-        models = await agent.models()
-        available = [m for m in models if m.available]
-        if not available:
-            print("\nNo available models")
+        # Check model is specified
+        if not ATHYR_MODEL:
+            print("\nError: ATHYR_MODEL environment variable is required")
+            print("Example: ATHYR_MODEL=llama2 python examples/streaming.py")
             return
 
-        model_id = available[0].id
+        model_id = ATHYR_MODEL
         print(f"Using model: {model_id}\n")
 
         # Create a request that will generate a longer response

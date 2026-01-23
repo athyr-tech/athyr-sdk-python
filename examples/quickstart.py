@@ -3,15 +3,15 @@
 
 Demonstrates basic SDK usage:
 - Agent connection
-- Listing available models
 - Making LLM completion requests
 
 Usage:
     # Start Athyr server first
     athyr serve
 
-    # Run the example
-    python examples/quickstart.py
+    # Run the example (ATHYR_MODEL is required)
+    ATHYR_MODEL=llama2 python examples/quickstart.py
+    ATHYR_MODEL=liquid/lfm-2.5-1.2b-instruct:free python examples/quickstart.py
 """
 
 import asyncio
@@ -20,8 +20,9 @@ import os
 from athyr import AthyrAgent, AgentCard
 from athyr.models import CompletionRequest, Message
 
-# Server address (configurable via ATHYR_SERVER env var for Docker)
+# Configuration via environment variables
 ATHYR_SERVER = os.environ.get("ATHYR_SERVER", "localhost:9090")
+ATHYR_MODEL = os.environ.get("ATHYR_MODEL")  # Required: model to use
 
 
 async def main() -> None:
@@ -40,24 +41,13 @@ async def main() -> None:
     async with AthyrAgent(ATHYR_SERVER, agent_card=card) as agent:
         print(f"Connected! Agent ID: {agent.agent_id()}")
 
-        # List available models
-        print("\nAvailable models:")
-        models = await agent.models()
-        for model in models:
-            status = "available" if model.available else "unavailable"
-            print(f"  - {model.name} ({model.backend}) [{status}]")
-
-        if not models:
-            print("  No models available")
+        # Check model is specified
+        if not ATHYR_MODEL:
+            print("\nError: ATHYR_MODEL environment variable is required")
+            print("Example: ATHYR_MODEL=llama2 python examples/quickstart.py")
             return
 
-        # Find first available model
-        available_models = [m for m in models if m.available]
-        if not available_models:
-            print("\nNo available models to use")
-            return
-
-        model_id = available_models[0].id
+        model_id = ATHYR_MODEL
         print(f"\nUsing model: {model_id}")
 
         # Make a completion request

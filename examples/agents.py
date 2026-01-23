@@ -7,11 +7,10 @@ Usage:
     # Terminal 1: Start Athyr
     athyr serve
 
-    # Terminal 2: Start agents for the example you want to run
-    python examples/agents.py pipeline                  # 3 agents, auto-select model
-    python examples/agents.py fanout --model llama2     # 3 agents, use llama2
-    python examples/agents.py handoff --model qwen3     # 5 agents, use qwen3
-    python examples/agents.py groupchat                 # 3 agents
+    # Terminal 2: Start agents (ATHYR_MODEL or --model required)
+    ATHYR_MODEL=llama2 python examples/agents.py pipeline
+    python examples/agents.py fanout --model llama2
+    ATHYR_MODEL=liquid/lfm-2.5-1.2b-instruct:free python examples/agents.py handoff
 
     # Terminal 3: Run the example
     python examples/pipeline.py
@@ -37,22 +36,8 @@ async def llm_agent(name: str, subject: str, system_prompt: str) -> None:
     card = AgentCard(name=name, description=f"LLM agent: {name}")
 
     async with AthyrAgent(ATHYR_SERVER, agent_card=card) as agent:
-        models = await agent.models()
-        available = [m for m in models if m.available]
-        if not available:
-            print(f"  {name}: No models available!", flush=True)
-            return
-
-        # Use specified model or first available
-        if MODEL_OVERRIDE:
-            matches = [m for m in available if MODEL_OVERRIDE in m.id]
-            if matches:
-                model_id = matches[0].id
-            else:
-                print(f"  {name}: Model '{MODEL_OVERRIDE}' not found, using {available[0].id}", flush=True)
-                model_id = available[0].id
-        else:
-            model_id = available[0].id
+        # Use the specified model directly
+        model_id = MODEL_OVERRIDE
         print(f"  {name}: ready ({model_id})", flush=True)
 
         sub = await agent.subscribe(subject)
@@ -152,14 +137,21 @@ async def main() -> None:
     if not example:
         print("Usage: python examples/agents.py <example> [--model <name>]")
         print(f"Examples: {', '.join(AGENT_GROUPS.keys())}")
-        print("Models: llama2, qwen3, granite4, etc. (partial match supported)")
+        print("\nModel selection (one required):")
+        print("  --model <name>     Specify model (partial match supported)")
+        print("  ATHYR_MODEL env    Fallback if --model not provided")
         sys.exit(1)
 
-    MODEL_OVERRIDE = model
-    agents = AGENT_GROUPS[example]
+    # Use --model flag, or fall back to ATHYR_MODEL env var
+    MODEL_OVERRIDE = model or os.environ.get("ATHYR_MODEL")
 
-    model_info = f" with model '{model}'" if model else ""
-    print(f"Starting {len(agents)} agents for {example}{model_info}...\n", flush=True)
+    if not MODEL_OVERRIDE:
+        print("Error: Model is required. Use --model flag or set ATHYR_MODEL env var.")
+        print("Example: ATHYR_MODEL=llama2 python examples/agents.py pipeline")
+        sys.exit(1)
+
+    agents = AGENT_GROUPS[example]
+    print(f"Starting {len(agents)} agents for {example} with model '{MODEL_OVERRIDE}'...\n", flush=True)
 
     tasks = [llm_agent(name, subject, prompt) for name, subject, prompt in agents]
     await asyncio.gather(*tasks)

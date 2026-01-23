@@ -160,16 +160,16 @@ See the [examples/](examples/) directory:
 # Terminal 1: Start Athyr server
 athyr serve
 
-# Terminal 2: Run any example
-python examples/quickstart.py
-python examples/pipeline.py
+# Terminal 2: Run any example (ATHYR_MODEL required)
+ATHYR_MODEL=llama2 python examples/quickstart.py
+ATHYR_MODEL=liquid/lfm-2.5-1.2b-instruct:free python examples/streaming.py
 ```
 
 For orchestration examples that need multiple agents:
 
 ```bash
 # Terminal 2: Start agents
-python examples/agents.py pipeline --model smollm2:135m
+ATHYR_MODEL=llama2 python examples/agents.py pipeline
 
 # Terminal 3: Run the orchestrator
 python examples/pipeline.py

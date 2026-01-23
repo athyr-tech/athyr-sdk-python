@@ -5,7 +5,8 @@ Combines session memory with tool calling for stateful assistants.
 Use for: chatbots, personal assistants, support agents.
 
 Usage:
-    python examples/chat_agent.py
+    # ATHYR_MODEL is required
+    ATHYR_MODEL=llama2 python examples/chat_agent.py
 """
 
 import asyncio
@@ -14,8 +15,9 @@ import os
 from athyr import AthyrAgent, AgentCard, tool, ToolRegistry, run_tool_loop
 from athyr.models import Message
 
-# Server address (configurable via ATHYR_SERVER env var for Docker)
+# Configuration via environment variables
 ATHYR_SERVER = os.environ.get("ATHYR_SERVER", "localhost:9090")
+ATHYR_MODEL = os.environ.get("ATHYR_MODEL")  # Required: model to use
 
 
 @tool
@@ -43,13 +45,12 @@ async def main() -> None:
         print(f"Connected: {agent.agent_id()}")
         print(f"Tools: {registry.names()}")
 
-        # Get model
-        models = await agent.models()
-        available = [m for m in models if m.available]
-        if not available:
-            print("No models available")
+        # Check model is specified
+        if not ATHYR_MODEL:
+            print("Error: ATHYR_MODEL environment variable is required")
+            print("Example: ATHYR_MODEL=llama2 python examples/chat_agent.py")
             return
-        model_id = available[0].id
+        model_id = ATHYR_MODEL
 
         # Create session with personality
         session = await agent.create_session(
