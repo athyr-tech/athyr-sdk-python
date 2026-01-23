@@ -5,6 +5,10 @@ Python SDK for [Athyr](https://athyr.tech) - a lightweight runtime for AI agents
 ## Installation
 
 ```bash
+# From GitHub
+pip install git+https://github.com/athyr-tech/athyr-sdk-python.git
+
+# From PyPI (coming soon)
 pip install athyr
 ```
 
