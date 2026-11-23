@@ -44,8 +44,8 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "https://athyr.tech"
-Documentation = "https://athyr.tech/docs"
+Homepage = "https://athyr.enkitech.de"
+Documentation = "https://athyr.enkitech.de/docs"
 Repository = "https://github.com/athyr-tech/athyr-sdk-python"
 
 [tool.hatch.build.targets.wheel]

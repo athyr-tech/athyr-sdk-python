@@ -1,6 +1,6 @@
 # Athyr Python SDK
 
-Python SDK for [Athyr](https://athyr.tech) - a lightweight runtime for AI agents as distributed microservices.
+Python SDK for [Athyr](https://athyr.enkitech.de) - a lightweight runtime for AI agents as distributed microservices.
 
 ## Installation
 
