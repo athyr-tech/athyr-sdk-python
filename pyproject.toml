@@ -10,7 +10,7 @@ readme = "README.md"
 license = "MIT"
 requires-python = ">=3.10"
 authors = [
-    { name = "Athyr", email = "dev@athyr.tech" }
+    { name = "Athyr", email = "contact@enkitech.de" }
 ]
 classifiers = [
     "Development Status :: 3 - Alpha",
